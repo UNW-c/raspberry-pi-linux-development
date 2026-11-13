@@ -10,7 +10,9 @@
 #include <cerrno>
 #include <chrono>
 #include <csignal>
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -31,6 +33,12 @@ constexpr const char* kBoundary = "prtsframe";
 std::int64_t nowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+std::int64_t epochMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now().time_since_epoch())
         .count();
 }
 
@@ -116,6 +124,16 @@ bool jpegDimensions(const std::string& data, int& width, int& height) {
     return false;
 }
 
+// One MJPEG client. Writes never block: the newest frame replaces whatever is
+// still queued, so a slow browser drops frames instead of building a backlog.
+struct Viewer {
+    int fd{-1};
+    std::string pending;
+    std::size_t sent{0};
+    std::uint64_t delivered{0};
+    std::uint64_t dropped{0};
+};
+
 }  // namespace
 
 CameraWebService::CameraWebService(driver::IMqttClient& mqtt, utils::Logger& logger)
@@ -141,7 +159,7 @@ const char* CameraWebService::pageHtml() {
   .name { font-weight: 700; letter-spacing: .12em; }
   .tag { margin-left: auto; color: #8a8a8a; letter-spacing: .18em; font-size: 11px; }
   .rule { height: 1px; background: #2e2e2e; margin: 10px 0 14px; }
-  .frame { display: block; width: 100%; max-width: 960px; border: 1px solid #2e2e2e; background: #0a0a0a; }
+  .frame { display: block; width: 100%; max-width: 640px; border: 1px solid #2e2e2e; background: #0a0a0a; }
   footer { display: flex; gap: 18px; flex-wrap: wrap; color: #8a8a8a; margin-top: 12px; }
   footer b { color: #bfbfbf; font-weight: 400; }
   .warn { color: #c9a227; }
@@ -162,6 +180,7 @@ const char* CameraWebService::pageHtml() {
   <span>SIZE <b id="size">-</b></span>
   <span>BYTES <b id="bytes">0</b></span>
   <span>VIEWERS <b id="clients">0</b></span>
+  <span>LATENCY <b id="latency">-</b></span>
   <span>MQTT <b id="mqtt">-</b></span>
   <span id="note" class="warn"></span>
 </footer>
@@ -175,6 +194,8 @@ async function refresh() {
     document.getElementById('size').textContent = status.width + 'x' + status.height;
     document.getElementById('bytes').textContent = status.bytes;
     document.getElementById('clients').textContent = status.clients;
+    document.getElementById('latency').textContent =
+      status.latency_ms >= 0 ? status.latency_ms + ' ms' : '-';
     document.getElementById('mqtt').textContent = status.mqtt;
     document.getElementById('note').textContent = status.width ? '' : 'waiting for the first frame';
   } catch (error) {
@@ -220,8 +241,8 @@ int CameraWebService::run(const Options& options) {
         ::close(listenSocket);
         return 2;
     }
-    const int flags = ::fcntl(listenSocket, F_GETFL, 0);
-    ::fcntl(listenSocket, F_SETFL, flags | O_NONBLOCK);
+    const int listenFlags = ::fcntl(listenSocket, F_GETFL, 0);
+    ::fcntl(listenSocket, F_SETFL, listenFlags | O_NONBLOCK);
 
     std::printf("prts-web: http://%s:%d/  (routes: / /stream /snapshot /status)\n",
                 options.bindAddress.c_str(), options.port);
@@ -237,13 +258,16 @@ int CameraWebService::run(const Options& options) {
     bool mqttReady = false;
     std::string error;
     mqttReady = mqtt_.connect(endpoint, error) && mqtt_.subscribe(options.frameTopic, error);
+    if (mqttReady && !options.stampTopic.empty()) {
+        mqtt_.subscribe(options.stampTopic, error);
+    }
     if (!mqttReady) {
         std::printf("prts-web: mqtt unavailable (%s), retrying in the background\n", error.c_str());
         std::fflush(stdout);
     }
     std::int64_t lastReconnect = nowMs();
 
-    std::vector<int> viewers;
+    std::vector<Viewer> viewers;
     std::string latestFrame;
     std::uint64_t frameCount = 0;
     std::uint64_t byteCount = 0;
@@ -252,6 +276,8 @@ int CameraWebService::run(const Options& options) {
     int fps = 0;
     int framesThisSecond = 0;
     std::int64_t lastFpsMark = nowMs();
+    std::int64_t lastStamp = 0;
+    std::int64_t latencyMs = -1;
 
     while (g_running != 0) {
         const std::int64_t loopStart = nowMs();
@@ -260,6 +286,9 @@ int CameraWebService::run(const Options& options) {
             lastReconnect = loopStart;
             error.clear();
             if (mqtt_.connect(endpoint, error) && mqtt_.subscribe(options.frameTopic, error)) {
+                if (!options.stampTopic.empty()) {
+                    mqtt_.subscribe(options.stampTopic, error);
+                }
                 mqttReady = true;
                 std::printf("prts-web: mqtt connected\n");
                 std::fflush(stdout);
@@ -270,21 +299,28 @@ int CameraWebService::run(const Options& options) {
         if (mqttReady) {
             model::MqttMessage message;
             error.clear();
-            if (mqtt_.poll(15, message, error)) {
-                latestFrame = message.payload;
-                ++frameCount;
-                ++framesThisSecond;
-                byteCount += message.payload.size();
-                gotFrame = true;
-                if (width == 0) {
-                    int parsedWidth = 0;
-                    int parsedHeight = 0;
-                    if (jpegDimensions(message.payload, parsedWidth, parsedHeight)) {
-                        width = parsedWidth;
-                        height = parsedHeight;
+            if (mqtt_.poll(10, message, error)) {
+                if (!options.stampTopic.empty() && message.topic == options.stampTopic) {
+                    const std::string text = message.payload;
+                    if (!text.empty()) {
+                        lastStamp = std::atoll(text.c_str());
                     }
-                    std::printf("prts-web: first frame, %zu bytes\n", message.payload.size());
-                    std::fflush(stdout);
+                } else {
+                    latestFrame = message.payload;
+                    ++frameCount;
+                    ++framesThisSecond;
+                    byteCount += message.payload.size();
+                    gotFrame = true;
+                    if (width == 0) {
+                        int parsedWidth = 0;
+                        int parsedHeight = 0;
+                        if (jpegDimensions(message.payload, parsedWidth, parsedHeight)) {
+                            width = parsedWidth;
+                            height = parsedHeight;
+                        }
+                        std::printf("prts-web: first frame, %zu bytes\n", message.payload.size());
+                        std::fflush(stdout);
+                    }
                 }
             } else if (!error.empty()) {
                 std::printf("prts-web: mqtt lost: %s\n", error.c_str());
@@ -293,16 +329,55 @@ int CameraWebService::run(const Options& options) {
             }
         }
 
+        if (gotFrame && lastStamp > 0) {
+            const std::int64_t age = epochMs() - lastStamp;
+            if (age >= 0 && age < 60000) {
+                latencyMs = age;
+            }
+        }
+
+        // Newest frame wins: replace whatever a slow viewer still has queued.
         if (gotFrame) {
             const std::string chunk = frameChunk(latestFrame);
-            for (std::size_t index = 0; index < viewers.size();) {
-                if (!sendAll(viewers[index], chunk)) {
-                    ::close(viewers[index]);
-                    viewers.erase(viewers.begin() + static_cast<std::ptrdiff_t>(index));
+            for (Viewer& viewer : viewers) {
+                if (!viewer.pending.empty() || viewer.sent < viewer.pending.size()) {
+                    ++viewer.dropped;
+                }
+                viewer.pending = chunk;
+                viewer.sent = 0;
+            }
+        }
+
+        // Flush pending data without blocking; EAGAIN simply means "try later".
+        for (std::size_t index = 0; index < viewers.size();) {
+            Viewer& viewer = viewers[index];
+            bool dead = false;
+            while (viewer.sent < viewer.pending.size()) {
+                const ssize_t written = ::send(viewer.fd, viewer.pending.data() + viewer.sent,
+                                               viewer.pending.size() - viewer.sent, MSG_NOSIGNAL);
+                if (written > 0) {
+                    viewer.sent += static_cast<std::size_t>(written);
                     continue;
                 }
-                ++index;
+                if (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
+                    break;
+                }
+                dead = true;
+                break;
             }
+            if (viewer.sent >= viewer.pending.size()) {
+                if (!viewer.pending.empty()) {
+                    ++viewer.delivered;
+                    viewer.pending.clear();
+                    viewer.sent = 0;
+                }
+            }
+            if (dead) {
+                ::close(viewer.fd);
+                viewers.erase(viewers.begin() + static_cast<std::ptrdiff_t>(index));
+                continue;
+            }
+            ++index;
         }
 
         const std::int64_t now = nowMs();
@@ -323,9 +398,21 @@ int CameraWebService::run(const Options& options) {
             ::setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
             ::setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 
+            // The request may arrive in several segments (tunnels do this), so
+            // read until the header terminator instead of trusting one recv.
+            std::string raw;
             char buffer[2048] = {0};
-            const ssize_t received = ::recv(client, buffer, sizeof(buffer) - 1, 0);
-            const std::string raw(buffer, received > 0 ? static_cast<std::size_t>(received) : 0);
+            for (int attempt = 0; attempt < 4 && raw.find("\r\n\r\n") == std::string::npos;
+                 ++attempt) {
+                const ssize_t received = ::recv(client, buffer, sizeof(buffer) - 1, 0);
+                if (received <= 0) {
+                    break;
+                }
+                raw.append(buffer, static_cast<std::size_t>(received));
+                if (raw.size() > 4000) {
+                    break;
+                }
+            }
             const driver::HttpRequest request = driver::parseHttpRequestHead(raw);
             const bool headOnly = request.method == "HEAD";
 
@@ -339,7 +426,11 @@ int CameraWebService::run(const Options& options) {
                 ::close(client);
             } else if (request.path == "/stream") {
                 if (sendAll(client, streamHeaders())) {
-                    viewers.push_back(client);
+                    const int flags = ::fcntl(client, F_GETFL, 0);
+                    ::fcntl(client, F_SETFL, flags | O_NONBLOCK);
+                    Viewer viewer;
+                    viewer.fd = client;
+                    viewers.push_back(viewer);
                 } else {
                     ::close(client);
                 }
@@ -359,6 +450,12 @@ int CameraWebService::run(const Options& options) {
                 body += ",\"clients\":" + std::to_string(viewers.size());
                 body += ",\"width\":" + std::to_string(width);
                 body += ",\"height\":" + std::to_string(height);
+                body += ",\"latency_ms\":" + std::to_string(latencyMs);
+                std::uint64_t dropped = 0;
+                for (const Viewer& viewer : viewers) {
+                    dropped += viewer.dropped;
+                }
+                body += ",\"dropped\":" + std::to_string(dropped);
                 body += ",\"mqtt\":\"" + std::string(mqttReady ? "up" : "down") + "\"";
                 body += ",\"last_bytes\":" + std::to_string(latestFrame.size());
                 body += "}";
@@ -378,8 +475,8 @@ int CameraWebService::run(const Options& options) {
         }
     }
 
-    for (int viewer : viewers) {
-        ::close(viewer);
+    for (Viewer& viewer : viewers) {
+        ::close(viewer.fd);
     }
     ::close(listenSocket);
     mqtt_.disconnect();

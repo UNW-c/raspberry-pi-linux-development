@@ -29,6 +29,7 @@ void WebController::printHelp() {
         "  --mqtt-host HOST   broker address (default 127.0.0.1)\n"
         "  --mqtt-port PORT   broker port (default 1883)\n"
         "  --topic TOPIC      frame topic (default prts/camera/frame)\n"
+        "  --stamp-topic T    capture timestamp topic used for latency (default prts/camera/stamp)\n"
         "  --client-id ID     MQTT client id (default prts-web)\n"
         "  -h, --help         show this help\n"
         "  -V, --version      print the version\n"
@@ -59,7 +60,7 @@ WebController::Options WebController::parse(int argc, const char* const argv[],
             options.showVersion = true;
         } else if (argument == "--bind" || argument == "--port" || argument == "--mqtt-host" ||
                    argument == "--mqtt-port" || argument == "--topic" ||
-                   argument == "--client-id") {
+                   argument == "--stamp-topic" || argument == "--client-id") {
             if (index + 1 >= argc) {
                 error = argument + " requires a value";
                 return options;
@@ -75,6 +76,8 @@ WebController::Options WebController::parse(int argc, const char* const argv[],
                 options.mqttPort = std::atoi(value.c_str());
             } else if (argument == "--topic") {
                 options.topic = value;
+            } else if (argument == "--stamp-topic") {
+                options.stampTopic = value;
             } else {
                 options.clientId = value;
             }
@@ -108,6 +111,7 @@ int WebController::run(int argc, const char* const argv[]) {
     serviceOptions.mqttHost = options.mqttHost;
     serviceOptions.mqttPort = options.mqttPort;
     serviceOptions.frameTopic = options.topic;
+    serviceOptions.stampTopic = options.stampTopic;
     serviceOptions.clientId = options.clientId;
 
     logger_.info("web viewer on " + options.bindAddress + ":" + std::to_string(options.port) +

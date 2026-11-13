@@ -81,6 +81,10 @@ PACKAGES=(
     locales
     python3
     device-tree-compiler
+    v4l-utils
+    libjpeg62-turbo-dev
+    mosquitto
+    mosquitto-clients
 )
 
 log "installing toolchain: ${PACKAGES[*]}"

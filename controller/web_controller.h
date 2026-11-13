@@ -18,6 +18,7 @@ public:
         std::string mqttHost{"127.0.0.1"};
         int mqttPort{1883};
         std::string topic{"prts/camera/frame"};
+        std::string stampTopic{"prts/camera/stamp"};
         std::string clientId{"prts-web"};
         bool showHelp{false};
         bool showVersion{false};

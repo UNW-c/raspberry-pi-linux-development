@@ -120,7 +120,9 @@ MQTT 客户端是按 MQTT 3.1.1 手写的（`driver/mqtt_codec` + `driver/tcp_mq
 ## 相机
 
 树莓派上插的 USB 相机（UVC，免驱）由 `prts-camera` 采集成 MJPEG 帧发到 MQTT，
-`prts-web` 再把帧转成网页的 MJPEG 流：
+`prts-web` 再把帧转成网页的 MJPEG 流。相机只支持 640×480 / 1280×720，而 WiFi 只有
+约 320 KiB/s，所以默认在树莓派上把帧重编码到 320×240（约 10 KB/帧，15 fps），
+否则链路会被打满、画面延迟累积。
 
 ```bash
 # 树莓派
@@ -149,15 +151,23 @@ prts-cam stop       # 停掉
 常用键：
 
 ```ini
+[config]
+schema = 3                ; 版本号，部署时据此迁移旧配置
+
 [general]
-char_delay_ms = 10        ; 逐字速度
-frame_delay_ms = 30       ; 扫描线帧间隔
-check_delay_ms = 90       ; 每条自检的停顿
-min_columns_full = 78     ; 低于此宽度使用紧凑布局
-min_rows_full = 30        ; 低于此高度使用紧凑布局
+char_delay_ms = 6         ; 逐字速度
+frame_delay_ms = 24       ; 进度条帧间隔
+check_delay_ms = 70       ; 每条自检的停顿
+min_columns_full = 62     ; 低于此宽度使用紧凑布局
+min_rows_full = 27        ; 低于此高度使用紧凑布局
+flash_frames = 1          ; 自检行的黑白反转帧数，0 关闭
 
 [colors]
-accent = #11AFCF          ; PRTS 青色强调色
+rule = #2E2E2E            ; 细线
+primary = #F0F0F0         ; 正文
+muted = #8A8A8A           ; 标签
+warn = #C9A227            ; 仅告警
+danger = #C0392B          ; 仅故障
 ```
 
 ## 开发工作流

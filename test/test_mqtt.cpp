@@ -4,7 +4,6 @@
 #include "model/system_facts.h"
 #include "service/telemetry_service.h"
 #include "test/test_framework.h"
-
 PRTS_TEST(mqtt_remaining_length_round_trip) {
     const std::size_t values[] = {0, 1, 127, 128, 16383, 16384, 2097151};
     for (std::size_t value : values) {

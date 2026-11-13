@@ -7,6 +7,8 @@
 #include <string>
 #include <thread>
 
+#include "driver/jpeg_codec.h"
+
 namespace prts::controller {
 namespace {
 
@@ -33,9 +35,12 @@ void CameraController::printHelp() {
         "  --device PATH      V4L2 device (default /dev/video0)\n"
         "  --width N          capture width (default 640)\n"
         "  --height N         capture height (default 480)\n"
-        "  --fps N            publish rate (default 10)\n"
+        "  --fps N            publish rate (default 15)\n"
+        "  --scale N          downscale factor before publishing: 1, 2, 4 (default 2 = 320x240)\n"
+        "  --quality Q        JPEG quality after rescaling, 1-100 (default 70)\n"
         "  --frame-topic T    topic carrying the JPEG bytes (default prts/camera/frame)\n"
         "  --meta-topic T     topic carrying frame metadata (default prts/camera/meta)\n"
+        "  --stamp-topic T    topic carrying the capture timestamp, used for latency (default prts/camera/stamp)\n"
         "  --meta-every N     publish metadata every N frames (default 30)\n"
         "  --count N          stop after N frames (default 0 = until interrupted)\n"
         "  --client-id ID     MQTT client id (default prts-camera)\n"
@@ -66,9 +71,10 @@ CameraController::Options CameraController::parse(int argc, const char* const ar
             options.showVersion = true;
         } else if (argument == "--host" || argument == "--port" || argument == "--device" ||
                    argument == "--width" || argument == "--height" || argument == "--fps" ||
+                   argument == "--scale" || argument == "--quality" ||
                    argument == "--frame-topic" || argument == "--meta-topic" ||
-                   argument == "--meta-every" || argument == "--count" ||
-                   argument == "--client-id") {
+                   argument == "--stamp-topic" || argument == "--meta-every" ||
+                   argument == "--count" || argument == "--client-id") {
             if (index + 1 >= argc) {
                 error = argument + " requires a value";
                 return options;
@@ -86,10 +92,16 @@ CameraController::Options CameraController::parse(int argc, const char* const ar
                 options.height = std::atoi(value.c_str());
             } else if (argument == "--fps") {
                 options.fps = std::atoi(value.c_str());
+            } else if (argument == "--scale") {
+                options.scale = std::atoi(value.c_str());
+            } else if (argument == "--quality") {
+                options.quality = std::atoi(value.c_str());
             } else if (argument == "--frame-topic") {
                 options.frameTopic = value;
             } else if (argument == "--meta-topic") {
                 options.metaTopic = value;
+            } else if (argument == "--stamp-topic") {
+                options.stampTopic = value;
             } else if (argument == "--meta-every") {
                 options.metaEvery = std::atoi(value.c_str());
             } else if (argument == "--count") {
@@ -133,6 +145,7 @@ int CameraController::stream(const Options& options) {
     const int metaEvery = std::max(1, options.metaEvery);
     int captured = 0;
     std::uint64_t publishedBytes = 0;
+    bool scaleFailureReported = false;
 
     while (options.maxFrames <= 0 || captured < options.maxFrames) {
         const std::int64_t frameStart = clock_.steadyMillis();
@@ -148,7 +161,39 @@ int CameraController::stream(const Options& options) {
             return 5;
         }
 
+        // Shrink before publishing: the camera only offers 640x480 or larger and
+        // a small frame is what keeps the stream close to real time on wifi.
+        if (options.scale > 1 && frame.format == "MJPG") {
+            std::vector<std::uint8_t> scaled;
+            int scaledWidth = 0;
+            int scaledHeight = 0;
+            std::string resizeError;
+            if (driver::scaleJpeg(frame.data, options.scale, options.quality, scaled, scaledWidth,
+                                  scaledHeight, resizeError)) {
+                frame.data.swap(scaled);
+                frame.width = scaledWidth;
+                frame.height = scaledHeight;
+            } else if (!scaleFailureReported) {
+                std::fprintf(stderr,
+                             "prts-camera: rescale failed (%s), publishing full frames\n",
+                             resizeError.c_str());
+                scaleFailureReported = true;
+            }
+        }
+
         const std::string payload(reinterpret_cast<const char*>(frame.data.data()), frame.data.size());
+
+        // The stamp travels ahead of the frame so a viewer can report how old
+        // the picture is by the time it reaches the browser.
+        const std::string stamp = std::to_string(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch())
+                .count());
+        if (!options.stampTopic.empty()) {
+            std::string stampError;
+            client_.publish(options.stampTopic, stamp, stampError);
+        }
+
         if (!client_.publish(options.frameTopic, payload, error)) {
             std::fprintf(stderr, "prts-camera: publish failed: %s\n", error.c_str());
             camera_.close();

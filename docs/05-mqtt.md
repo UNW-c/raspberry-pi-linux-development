@@ -106,6 +106,41 @@ prts-camera --device /dev/video0 --frame-topic prts/camera/frame
 实现：`driver/v4l2_camera` 用 V4L2 mmap 四缓冲采集 MJPG，`service/camera_service` 负责生命周期与元数据，
 `controller/camera_controller` 负责连接、限速与发布。
 
+### 实时性
+
+实测这条链路（树莓派 WiFi → 电脑）只有约 **320 KiB/s**。原始 640×480 MJPG 每帧约 65 KB，
+10 fps 需要 650 KB/s，链路被瞬间打满，TCP 发送缓冲越堆越多，画面就会越拖越远。
+
+现在改成在树莓派上重编码后再发：
+
+| 项目 | 之前 | 现在 |
+| --- | --- | --- |
+| 分辨率 | 640×480 | 320×240（`--scale 2`，libjpeg DCT 缩放） |
+| 单帧 | ~65 KB | ~10 KB |
+| 默认帧率 | 10 fps | 15 fps |
+| 带宽 | ~650 KB/s（超载） | ~150 KB/s（链路一半） |
+| 服务端延迟 | 数秒（积压） | 1–2 ms |
+| 经隧道实测 | ~4 fps、大量丢弃 | 17 fps、0 丢弃 |
+
+`prts-web` 的 `/status` 里有两个关键字段：
+
+- `latency_ms`：从相机打时间戳到网页服务收到帧的时间（`prts/camera/stamp` 主题）
+- `dropped`：慢客户端被丢弃的帧数
+
+写入浏览器时采用「最新帧优先」：某个客户端来不及时，服务端直接丢掉旧帧换新帧，
+所以慢连接不会累积延迟，只会掉帧。
+
+> 相机本身只支持 640×480 和 1280×720（MJPG / YUYV），没有更低的分辨率可选，
+> 所以缩小是在树莓派上做的（需要 `libjpeg62-turbo-dev`，`provision_pi.sh` 已包含）。
+
+调整方式：
+
+```bash
+prts-camera-web restart --fps 20                # 更流畅，带宽约 200 KB/s
+prts-camera-web restart --scale 4 --quality 60  # 160x120，约 4 KB/帧
+prts-camera-web restart --scale 1               # 关闭缩放（回到 640x480）
+```
+
 ### 电脑：查看
 
 网页端（推荐，浏览器直接看，不需要任何插件）。装一次命令，之后一条指令：

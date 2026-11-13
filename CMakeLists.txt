@@ -15,6 +15,8 @@ endif()
 
 set(PRTS_WARNINGS -Wall -Wextra -Wpedantic -Wshadow -Wnon-virtual-dtor)
 
+find_package(JPEG REQUIRED)
+
 # ---------------------------------------------------------------------------
 # Core library - every layer below app/ lives here so that tests can link it.
 # ---------------------------------------------------------------------------
@@ -30,6 +32,7 @@ add_library(prts_core STATIC
     driver/tcp_mqtt_client.cpp
     driver/v4l2_camera.cpp
     driver/http_request.cpp
+    driver/jpeg_codec.cpp
     service/config_service.cpp
     service/animation_service.cpp
     service/logo_art.cpp
@@ -46,6 +49,7 @@ add_library(prts_core STATIC
 )
 
 target_include_directories(prts_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(prts_core PUBLIC JPEG::JPEG)
 target_compile_options(prts_core PRIVATE ${PRTS_WARNINGS})
 
 # ---------------------------------------------------------------------------
@@ -81,6 +85,7 @@ add_executable(prts_tests
     test/test_boot_sequence.cpp
     test/test_mqtt.cpp
     test/test_camera.cpp
+    test/test_jpeg.cpp
     test/test_web.cpp
 )
 target_link_libraries(prts_tests PRIVATE prts_core)

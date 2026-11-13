@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # PRTS camera stack controller (runs on the node).
 #
-#   prts-camera-web            start the publisher and the web page
-#   prts-camera-web start      same
-#   prts-camera-web stop       stop both processes
-#   prts-camera-web restart    stop, then start
-#   prts-camera-web status     processes, web endpoint, broker, camera
-#   prts-camera-web logs       tail both logs
+#   prts-camera-web                       start the publisher and the web page
+#   prts-camera-web start [camera opts]   same, with options for prts-camera
+#   prts-camera-web stop                  stop both processes
+#   prts-camera-web restart               stop, wait for the device, start
+#   prts-camera-web status                processes, web endpoint, broker, camera
+#   prts-camera-web logs                  tail both logs
+#
+# Camera options are forwarded as-is, e.g.
+#   prts-camera-web start --fps 20
+#   prts-camera-web start --width 640 --height 480 --fps 15
 set -uo pipefail
 
 BIN_DIR="$HOME/.local/bin"
@@ -14,16 +18,23 @@ WEB_LOG="/tmp/prts-web.log"
 CAMERA_LOG="/tmp/prts-camera.log"
 WEB_PORT=8080
 COMMAND="${1:-start}"
+[ $# -gt 0 ] && shift
+CAMERA_OPTIONS=("$@")
 
 usage() {
     cat <<'USAGE'
-prts-camera-web [start|stop|restart|status|logs]
+prts-camera-web [start|stop|restart|status|logs] [camera options]
 
   start     start prts-web and prts-camera (default)
   stop      stop both processes
   restart   stop, then start
   status    show processes, web endpoint, broker and camera
   logs      tail /tmp/prts-web.log and /tmp/prts-camera.log
+
+camera options (forwarded to prts-camera):
+  --fps N               publish rate (default 15)
+  --width N --height N  capture size the device supports (640x480 or 1280x720)
+  --meta-every N        metadata cadence (default 30)
 USAGE
 }
 
@@ -50,36 +61,51 @@ web_status() {
     curl -s --max-time 2 "http://127.0.0.1:$WEB_PORT/status" 2>/dev/null
 }
 
-start_one() {
-    local name=$1
-    local log=$2
-    if is_running "$name"; then
-        echo "  $name: already running"
+start_web() {
+    if is_running prts-web; then
+        echo "  prts-web: already running"
         return 0
     fi
-    nohup "$BIN_DIR/$name" >"$log" 2>&1 &
-    echo "  $name: started (log $log)"
+    nohup "$BIN_DIR/prts-web" >"$WEB_LOG" 2>&1 &
+    echo "  prts-web: started (log $WEB_LOG)"
+}
+
+# The V4L2 device needs a moment to be released after the previous process
+# exits, otherwise the first open fails with EBUSY. Retry instead of giving up.
+start_camera() {
+    if is_running prts-camera; then
+        echo "  prts-camera: already running"
+        return 0
+    fi
+    local attempt
+    for attempt in 1 2 3 4 5 6; do
+        nohup "$BIN_DIR/prts-camera" "${CAMERA_OPTIONS[@]}" >"$CAMERA_LOG" 2>&1 &
+        sleep 0.8
+        if is_running prts-camera; then
+            echo "  prts-camera: started (log $CAMERA_LOG)"
+            return 0
+        fi
+        sleep 1
+    done
+    echo "  prts-camera: failed to start, last log line:"
+    tail -n 3 "$CAMERA_LOG" 2>/dev/null | sed 's/^/    /'
+    return 1
 }
 
 do_start() {
     require_binaries || exit 1
     echo "starting camera stack"
+    start_web
+    start_camera
 
-    start_one prts-web "$WEB_LOG"
-    sleep 0.5
-    start_one prts-camera "$CAMERA_LOG"
-
-    local attempt
+    local attempt payload
     for attempt in 1 2 3 4 5 6 7 8 9 10; do
-        if [ -n "$(web_status)" ]; then
-            break
-        fi
+        payload="$(web_status)"
+        [ -n "$payload" ] && break
         sleep 0.3
     done
 
     echo
-    local payload
-    payload="$(web_status)"
     if [ -n "$payload" ]; then
         echo "  web: http://127.0.0.1:$WEB_PORT/"
         echo "  $payload"
@@ -150,7 +176,7 @@ do_logs() {
 case "$COMMAND" in
     start) do_start ;;
     stop) do_stop ;;
-    restart) do_stop; echo; do_start ;;
+    restart) do_stop; sleep 1; echo; do_start ;;
     status) do_status ;;
     logs) do_logs ;;
     -h|--help|help) usage ;;
