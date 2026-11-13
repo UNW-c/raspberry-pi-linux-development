@@ -110,17 +110,33 @@ prts-camera --device /dev/video0 --frame-topic prts/camera/frame
 
 网页端（推荐，浏览器直接看，不需要任何插件）：
 
+```powershell
+# 一键：在节点上拉起 prts-camera + prts-web，开 SSH 本地转发，打开浏览器
+scripts\camera_web.bat
+# 等价命令
+powershell -ExecutionPolicy Bypass -File scripts\camera_web.ps1
+```
+
+脚本做四件事（幂等，可重复执行）：
+
+1. `ssh` 到节点执行 `scripts/start_camera_stack.sh`，已在跑就不重复启动
+2. 若本地 `18080` 上没有可用的页面（用 `/status` 探活，而不是只看端口），就关掉残留的 `ssh -N`
+   转发并重新建立一个
+3. 打开 `http://127.0.0.1:18080/`
+4. 保持隧道，按 `Ctrl+C` 退出并关闭自己建的隧道
+
+手动方式：
+
 ```bash
-# 树莓派上：先推流，再起网页服务（默认 127.0.0.1:8080）
+# 树莓派上
 prts-camera &
 prts-web
 ```
 
 ```powershell
-# 电脑上：连接脚本已经带上了端口转发 18080 -> 节点 8080
-scripts\connect_prts.bat          # 或者手动 ssh -L 127.0.0.1:18080:127.0.0.1:8080 seven@PRTS.local
-# 浏览器打开
-#   http://127.0.0.1:18080/
+# 电脑上
+ssh -L 127.0.0.1:18080:127.0.0.1:8080 seven@PRTS.local
+# 浏览器打开 http://127.0.0.1:18080/
 ```
 
 页面自带状态行（帧序号、帧率、分辨率、流量、观看人数、MQTT 状态），

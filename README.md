@@ -91,6 +91,8 @@ prts-mqtt --help       # 帮助
 | `scripts/push_all.ps1` | Windows | 提交并同时推送 gitee 与 github（自动带上代理） |
 | `scripts/mqtt_listen.ps1` | Windows | 订阅 MQTT 主题并在控制台按行显示（无需安装客户端） |
 | `scripts/camera_view.ps1` | Windows | 实时显示相机帧，或 `-SaveDir` 存盘 |
+| `scripts/camera_web.bat` / `.ps1` | Windows | 一键：拉起节点侧相机与网页、开 SSH 转发、打开浏览器 |
+| `scripts/start_camera_stack.sh` | 树莓派 | 幂等启动 `prts-camera` 与 `prts-web` |
 | `scripts/provision_pi.sh` | 树莓派 (root) | 安装工具链与编译依赖、建立目录、导出 locale |
 | `scripts/deploy.sh` | 树莓派 (seven) | CMake 编译、跑单测、安装二进制、写入登录钩子 |
 | `scripts/inspect_camera.sh` | 树莓派 | 列出 USB / V4L2 / 设备树里与相机相关的信息 |
@@ -123,9 +125,9 @@ prts-web
 ```
 
 ```powershell
-# 电脑：连接脚本已带端口转发 18080 -> 节点 8080
-scripts\connect_prts.bat
-# 浏览器打开 http://127.0.0.1:18080/
+# 电脑：一键脚本（启动节点侧、开隧道、打开浏览器）
+scripts\camera_web.bat
+# 浏览器地址：http://127.0.0.1:18080/
 ```
 
 因为网页服务只监听节点的 `127.0.0.1`、通过 SSH 本地转发访问，
