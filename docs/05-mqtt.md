@@ -108,21 +108,58 @@ prts-camera --device /dev/video0 --frame-topic prts/camera/frame
 
 ### 电脑：查看
 
-```powershell
-# 实时窗口（WinForms，无外部依赖）
-powershell -ExecutionPolicy Bypass -File scripts\camera_view.ps1
+网页端（推荐，浏览器直接看，不需要任何插件）：
 
-# 存盘模式（无窗口，适合验证链路）
+```bash
+# 树莓派上：先推流，再起网页服务（默认 127.0.0.1:8080）
+prts-camera &
+prts-web
+```
+
+```powershell
+# 电脑上：连接脚本已经带上了端口转发 18080 -> 节点 8080
+scripts\connect_prts.bat          # 或者手动 ssh -L 127.0.0.1:18080:127.0.0.1:8080 seven@PRTS.local
+# 浏览器打开
+#   http://127.0.0.1:18080/
+```
+
+页面自带状态行（帧序号、帧率、分辨率、流量、观看人数、MQTT 状态），
+路由如下：
+
+| 路由 | 内容 |
+| --- | --- |
+| `/` | 网页（纯内联 CSS/JS，不依赖任何 CDN） |
+| `/stream` | `multipart/x-mixed-replace` MJPEG 实时流 |
+| `/snapshot` | 最近一帧 JPEG |
+| `/status` | `{"frames":..,"fps":..,"width":640,"height":480,"clients":..,"mqtt":"up"}` |
+
+**内网穿透场景**：`prts-web` 默认只监听 `127.0.0.1`，所以不需要在路由器或 frp 上额外开端口；
+浏览器访问的是本机 `18080`，流量走已有的 SSH 连接（`ssh -L` 转发），
+所以无论直连内网还是通过 frp 转发 SSH，用法完全一样。
+
+窗口版（WinForms，直接订阅 MQTT）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\camera_view.ps1
+```
+
+存盘模式（无窗口，适合验证链路，收不到帧会在 15 秒后退出）：
+
+```powershell
 powershell -ExecutionPolicy Bypass -File scripts\camera_view.ps1 -SaveDir .\frames -Count 3
 ```
 
-`-SaveDir` 模式在 `-TimeoutSeconds`（默认 15 秒）内收不到帧会退出并报错，不会挂住。
+### 带宽参考
+
+640×480 MJPG 单帧约 74 KB，10 fps ≈ 740 KB/s；远程链路吃紧时用 `prts-camera --fps 5`
+或 `--width 320 --height 240` 降档。
 
 ### 已知问题
 
-- 采集到的画面接近全黑（平均亮度 2/255、最大值 5）。链路本身正常：帧是合法的 640×480 JPEG，
-  所以先确认镜头是否被遮挡、是否对着暗处；`v4l2-ctl --list-ctrls` 里 `auto_exposure=3` 为自动曝光。
 - USB 链路偶发 `EPROTO` 并导致设备重新枚举（`dmesg` 可见 `USB disconnect` 后立刻重连）。
-  出现 `VIDIOC_S_FMT: Device or resource busy` 或 `No such device` 时，重新插拔相机即可；
+  出现 `VIDIOC_S_FMT: Device or resource busy` 或 `No such device` 时重新插拔相机；
   若频繁复现，换短一点的线或带供电的 HUB。
+- 画面全黑时先检查镜头是否被遮挡：`auto_exposure=3`（自动）下正常室内亮度应达到 100/255 以上。
+- 本机 `8080` 常被其它程序占用，因此连接脚本把本地端口映射到 `18080`；
+  如需改端口，编辑 `connect_prts.ps1` 里的 `-L 127.0.0.1:18080:127.0.0.1:8080`。
 

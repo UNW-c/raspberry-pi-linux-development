@@ -29,6 +29,7 @@ add_library(prts_core STATIC
     driver/mqtt_codec.cpp
     driver/tcp_mqtt_client.cpp
     driver/v4l2_camera.cpp
+    driver/http_request.cpp
     service/config_service.cpp
     service/animation_service.cpp
     service/logo_art.cpp
@@ -37,9 +38,11 @@ add_library(prts_core STATIC
     service/boot_sequence_service.cpp
     service/telemetry_service.cpp
     service/camera_service.cpp
+    service/camera_web_service.cpp
     controller/boot_controller.cpp
     controller/mqtt_controller.cpp
     controller/camera_controller.cpp
+    controller/web_controller.cpp
 )
 
 target_include_directories(prts_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -60,6 +63,10 @@ add_executable(prts-camera app/camera_main.cpp)
 target_link_libraries(prts-camera PRIVATE prts_core)
 target_compile_options(prts-camera PRIVATE ${PRTS_WARNINGS})
 
+add_executable(prts-web app/web_main.cpp)
+target_link_libraries(prts-web PRIVATE prts_core)
+target_compile_options(prts-web PRIVATE ${PRTS_WARNINGS})
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -74,6 +81,7 @@ add_executable(prts_tests
     test/test_boot_sequence.cpp
     test/test_mqtt.cpp
     test/test_camera.cpp
+    test/test_web.cpp
 )
 target_link_libraries(prts_tests PRIVATE prts_core)
 target_compile_options(prts_tests PRIVATE ${PRTS_WARNINGS})
@@ -83,5 +91,5 @@ add_test(NAME prts_unit_tests COMMAND prts_tests)
 # Install
 # ---------------------------------------------------------------------------
 include(GNUInstallDirs)
-install(TARGETS prts-boot prts-mqtt prts-camera RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS prts-boot prts-mqtt prts-camera prts-web RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES config/prts.conf DESTINATION ${CMAKE_INSTALL_DATADIR}/prts)

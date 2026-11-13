@@ -76,6 +76,8 @@ prts-mqtt subscribe    # 订阅主题并把消息打印出来
 
 prts-camera            # V4L2 采集 MJPG 帧并发到 prts/camera/frame
 prts-camera --count 50 --fps 5
+
+prts-web               # 把帧转成网页 /stream（默认 127.0.0.1:8080）
 prts-mqtt --help       # 帮助
 ```
 
@@ -108,6 +110,26 @@ powershell -ExecutionPolicy Bypass -File scripts\mqtt_listen.ps1 -Topic 'prts/#'
 
 MQTT 客户端是按 MQTT 3.1.1 手写的（`driver/mqtt_codec` + `driver/tcp_mqtt_client`），
 不依赖 libmosquitto。详见 [MQTT 遥测链路](docs/05-mqtt.md)。
+
+## 相机
+
+树莓派上插的 USB 相机（UVC，免驱）由 `prts-camera` 采集成 MJPEG 帧发到 MQTT，
+`prts-web` 再把帧转成网页的 MJPEG 流：
+
+```bash
+# 树莓派
+prts-camera &
+prts-web
+```
+
+```powershell
+# 电脑：连接脚本已带端口转发 18080 -> 节点 8080
+scripts\connect_prts.bat
+# 浏览器打开 http://127.0.0.1:18080/
+```
+
+因为网页服务只监听节点的 `127.0.0.1`、通过 SSH 本地转发访问，
+所以直连内网和通过内网穿透（frp）连 SSH 时，浏览器里的地址和用法完全一样。
 
 ## 配置
 

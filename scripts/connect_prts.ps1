@@ -88,6 +88,8 @@ if (-not $NoBanner) {
         'password via SSH_ASKPASS'
     }
     Write-PrstLinkPanel -Node "$user@$($endpoint.Address):$port" -State 'HANDSHAKE' -Detail $detail
+    Write-Host '  camera web: http://127.0.0.1:18080/  (run prts-web on the node)' -ForegroundColor DarkGray
+    Write-Host ''
 }
 
 $passwordState = New-PrstPasswordEnvironment -Password $password
@@ -98,6 +100,10 @@ $sshArguments = @(
     '-o', 'NumberOfPasswordPrompts=1',
     '-o', "ConnectTimeout=$connectTimeout",
     '-o', 'ServerAliveInterval=30',
+    '-o', 'ExitOnForwardFailure=no',
+    # Camera web viewer: the node serves it on loopback, the tunnel exposes it
+    # locally. 18080 is used because 8080 is often taken on the desktop.
+    '-L', '127.0.0.1:18080:127.0.0.1:8080',
     '-p', "$port"
 )
 
