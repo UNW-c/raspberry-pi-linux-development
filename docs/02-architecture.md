@@ -46,15 +46,15 @@ main
 
 ## 自检域
 
-| 域 | 数据来源 | 告警阈值 |
-| --- | --- | --- |
-| KERNEL | `uname(2)` | 无 |
-| HOST | `gethostname`、`/proc/device-tree/model` | 无 |
-| CPU | `/proc/cpuinfo`、`cpufreq`、`thermal_zone0`、`/proc/loadavg` | ≥70°C 告警，≥80°C 失败 |
-| MEMORY | `/proc/meminfo` | 可用 <15% 告警，<8% 失败 |
-| STORAGE | `statvfs("/")` | 可用 <15% 告警，<5% 失败 |
-| NETWORK | `getifaddrs`、`/proc/net/route` | 无 IPv4 告警 |
-| SESSION | `/proc/[pid]/{comm,stat}`、`/proc/uptime` | sshd 不可见告警 |
+| 行号 | 域 | 数据来源 | 告警阈值 |
+| --- | --- | --- | --- |
+| 01 | KERNEL | `uname(2)` | 无 |
+| 02 | HOST | `gethostname`、`/proc/device-tree/model` | 无 |
+| 03 | CORE | `/proc/cpuinfo`、`cpufreq`、`thermal_zone0`、`/proc/loadavg` | ≥70°C 告警，≥80°C 失败 |
+| 04 | MEMORY | `/proc/meminfo` | 可用 <15% 告警，<8% 失败 |
+| 05 | ARCHIVE | `statvfs("/")` | 可用 <15% 告警，<5% 失败 |
+| 06 | LINK | `getifaddrs`、`/proc/net/route` | 无 IPv4 告警 |
+| 07 | ACCESS | `/proc/[pid]/{comm,stat}`、`/proc/uptime` | sshd 不可见告警 |
 
 全部读取 procfs/sysfs，不 `fork` 子进程，单次自检在百微秒级。
 

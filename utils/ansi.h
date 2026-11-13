@@ -26,6 +26,9 @@ public:
     static std::string clearLine();
     // Erases from the cursor to the end of the line, keeping what was printed.
     static std::string eraseToEndOfLine();
+    // Swaps foreground and background: the game uses this instead of colours to
+    // mark the active element.
+    static std::string inverse();
     static std::string carriageReturn();    static std::string moveTo(int column, int row);
 
     // Palette used by the boot sequence is defined once, here, so that every

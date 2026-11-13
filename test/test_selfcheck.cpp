@@ -17,7 +17,9 @@ PRTS_TEST(selfcheck_reports_seven_domains) {
     PRTS_CHECK_EQ(results.size(), std::size_t{7});
     PRTS_CHECK_EQ(results.front().id, std::string("kernel"));
     PRTS_CHECK_EQ(results.front().value, std::string("Linux 6.18.50+rpt-rpi-v8"));
-    PRTS_CHECK_EQ(results.back().id, std::string("session"));
+    PRTS_CHECK_EQ(results.back().id, std::string("access"));
+    PRTS_CHECK_EQ(results[1].value, std::string("PRTS \u00b7 Pi 3 Model B Rev 1.2"));
+    PRTS_CHECK_EQ(results[3].label, std::string("MEMORY"));
     PRTS_CHECK_EQ(prts::service::SelfcheckService::countByStatus(results, prts::model::CheckStatus::Ok),
                   static_cast<int>(results.size()));
 }

@@ -14,8 +14,12 @@
 
 namespace prts::service {
 
-// Composes the PRTS style login sequence: header panel, emblem, wordmark, the
-// seven self-check rows, the boot bar and the closing summary.
+// Composes the PRTS terminal sequence: a gold-ruled header, the diamond
+// emblem, seven numbered self-check rows, the boot bar and the closing record.
+//
+// Visual language: monochrome first (white and greys), one warm gold for the
+// active elements, hairline rules, numbered rows, and the diamond (Originium)
+// motif. Colour never carries meaning on its own - the status word does.
 class BootSequenceService {
 public:
     struct Outcome {
@@ -32,40 +36,36 @@ public:
     Outcome run(bool animate);
 
 private:
-    enum class Density {
-        Full,
-        Compact,
-    };
-
-    Density chooseDensity() const;
+    bool useFullLayout() const;
     int contentWidth() const;
-    int contentRows() const;
 
     void renderHeader();
-    void renderArtwork(bool animate);
-    void renderCompactLogo();
+    void renderRule();
+    void renderIdentity(bool animate);
+    void renderCompactIdentity(bool animate);
     void renderChecks(const std::vector<model::CheckResult>& results, std::int64_t startedAt,
                       bool animate);
-    void renderCheckRow(const model::CheckResult& result, std::int64_t elapsedMs, bool animate);
-    void renderProgress(bool animate);
-    void renderSummary(const std::vector<model::CheckResult>& results, bool animate);
+    void renderCheckRow(const model::CheckResult& result, int number, bool animate);
+    void renderProgress(double ratio, std::int64_t elapsedMs, bool animate);
+    void renderVerdict(const std::vector<model::CheckResult>& results, bool animate);
     void renderWelcome(const SessionStateService::State& state, bool animate);
     void renderStatusStrip(const model::SystemFacts& facts);
-    void renderBlankLine();
 
-    void drawEmblemFrame(int highlightColumn, bool paced);
-    void drawWordmarkFrame(int highlightColumn, bool paced);
-    void drawGrid(const std::vector<std::string>& rows, int highlightColumn,
-                  const model::Color& topColor, const model::Color& bottomColor, bool paced);
+    std::string paint(const std::string& text, const model::Color& color, bool bold = false) const;
+    std::string padBetween(const std::string& left, const std::string& right) const;
 
+    static std::string statusTag(model::CheckStatus status);
     static std::string formatElapsed(std::int64_t milliseconds);
+    static std::string twoDigits(int value);
 
     AnimationService& animation_;
     SelfcheckService& selfcheck_;
     SessionStateService& sessionState_;
     const model::BootSettings& settings_;
     utils::Logger& logger_;
+
     model::SystemFacts facts_;
+    int sequenceNumber_{1};
 };
 
 }  // namespace prts::service

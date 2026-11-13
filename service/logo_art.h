@@ -5,16 +5,26 @@
 
 namespace prts::service {
 
-// Static artwork grids. Kept separate from the drawing logic so that the
-// sequence service only deals with composition and timing.
+// Geometry of the terminal artwork. Everything here is generated from a small
+// set of rules (grid maths) instead of hand-drawn strings, so the emblem stays
+// pixel-consistent at any size.
 class LogoArt {
 public:
-    // Seven row diamond emblem with a solid core, 13 cells wide.
-    static const std::vector<std::string>& emblem();
-    // Five row block wordmark, 21 cells wide.
-    static const std::vector<std::string>& wordmark();
+    struct Artwork {
+        std::vector<std::string> rows;  // each row padded to the requested width
+        int wordmarkRow{-1};            // row that carries the wordmark
+        int wordmarkStart{-1};          // first cell of the wordmark inside that row
+        int wordmarkLength{0};
+    };
+
+    // A hollow diamond outline (odd row count) with the wordmark on its middle
+    // row. The 45 degree slope is faked with 2 cells per step because terminal
+    // cells are about twice as tall as they are wide.
+    static Artwork diamond(int rows, const std::string& wordmark, int width);
+
     // Single line fallback used by the compact layout.
-    static std::string compactMark(const std::string& systemName);
+    static std::string compactLine(const std::string& systemName, const std::string& localName,
+                                   const std::string& accessNote);
 
     static int gridWidth(const std::vector<std::string>& rows);
 };

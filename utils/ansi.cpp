@@ -44,6 +44,8 @@ std::string Ansi::clearLine() { return "\033[2K"; }
 
 std::string Ansi::eraseToEndOfLine() { return "\033[K"; }
 
+std::string Ansi::inverse() { return "\033[7m"; }
+
 std::string Ansi::carriageReturn() { return "\r"; }
 
 std::string Ansi::moveTo(int column, int row) {

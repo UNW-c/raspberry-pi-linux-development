@@ -44,14 +44,15 @@ PRTS_TEST(boot_sequence_full_layout) {
     PRTS_CHECK_EQ(outcome.okCount, 7);
     PRTS_CHECK_EQ(outcome.warnCount, 0);
     PRTS_CHECK_EQ(outcome.failCount, 0);
-    PRTS_CHECK_EQ(fixture.terminal.lineCount(), 28);
+    PRTS_CHECK_EQ(fixture.terminal.lineCount(), 27);
     PRTS_CHECK(fixture.terminal.contains("PRTS"));
     PRTS_CHECK(fixture.terminal.contains("PRIMARY RHODES ISLAND TERMINAL SYSTEM"));
-    PRTS_CHECK(fixture.terminal.contains("LINK: ACTIVE"));
+    PRTS_CHECK(fixture.terminal.contains("RHODES ISLAND"));
+    PRTS_CHECK(fixture.terminal.contains("NO. 01"));
     PRTS_CHECK(fixture.terminal.contains("KERNEL"));
     PRTS_CHECK(fixture.terminal.contains("[ OK ]"));
-    PRTS_CHECK(fixture.terminal.contains("BOOT SEQUENCE"));
-    PRTS_CHECK(fixture.terminal.contains("ALL SYSTEMS NOMINAL"));
+    PRTS_CHECK(fixture.terminal.contains("BOOT"));
+    PRTS_CHECK(fixture.terminal.contains("ALL MODULES NOMINAL"));
 }
 
 PRTS_TEST(boot_sequence_compact_layout) {
@@ -60,7 +61,7 @@ PRTS_TEST(boot_sequence_compact_layout) {
 
     fixture.boot.run(false);
 
-    PRTS_CHECK_EQ(fixture.terminal.lineCount(), 16);
+    PRTS_CHECK_EQ(fixture.terminal.lineCount(), 18);
     PRTS_CHECK(fixture.terminal.contains("\u25c6 PRTS \u25c6"));
     PRTS_CHECK(fixture.terminal.contains("MEM"));
 }
@@ -77,13 +78,15 @@ PRTS_TEST(boot_sequence_records_session) {
     fixture.boot.run(false);
     const auto second = fixture.session.read();
     PRTS_CHECK_EQ(second.loginCount, std::uint64_t{2});
-    PRTS_CHECK(fixture.terminal.contains("\u7b2c 2 \u6b21\u63a5\u5165"));
+    PRTS_CHECK(fixture.terminal.contains("\u7b2c 2 \u6b21"));
 }
 
-PRTS_TEST(boot_sequence_fits_terminal_width) {
+PRTS_TEST(boot_sequence_uses_diamond_artwork_in_full_layout) {
     Fixture fixture;
-    fixture.terminal.size_ = {80, 30};
+    fixture.terminal.size_ = {90, 32};
 
     fixture.boot.run(false);
-    PRTS_CHECK_EQ(fixture.terminal.lineCount(), 28);
+
+    PRTS_CHECK(fixture.terminal.contains("P  R  T  S"));
+    PRTS_CHECK_EQ(fixture.terminal.lineCount(), 27);
 }

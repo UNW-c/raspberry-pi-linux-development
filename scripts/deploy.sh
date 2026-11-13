@@ -65,11 +65,31 @@ log "installing to $INSTALL_BIN_DIR"
 install -d "$INSTALL_BIN_DIR" "$USER_CONFIG_DIR"
 install -m 0755 "$BUILD_DIR/prts-boot" "$INSTALL_BIN_DIR/prts-boot"
 
-if [ ! -f "$USER_CONFIG_DIR/prts.conf" ]; then
+# The configuration schema evolves with the binary. A stale installed copy is
+# backed up and replaced so that an old palette or pacing cannot silently
+# survive an upgrade; [config] schema in the shipped file is the version marker.
+readConfigSchema() {
+    local file=$1
+    if [ ! -f "$file" ]; then
+        echo ""
+        return
+    fi
+    sed -n 's/^[[:space:]]*schema[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*$/\1/p' "$file" | head -n 1
+}
+
+SHIPPED_SCHEMA="$(readConfigSchema "$PROJECT_ROOT/config/prts.conf")"
+INSTALLED_SCHEMA="$(readConfigSchema "$USER_CONFIG_DIR/prts.conf")"
+
+if [ ! -f "$USER_CONFIG_DIR/prts.conf" ] || [ "$SHIPPED_SCHEMA" != "$INSTALLED_SCHEMA" ]; then
+    if [ -f "$USER_CONFIG_DIR/prts.conf" ]; then
+        BACKUP="$USER_CONFIG_DIR/prts.conf.legacy.$(date +%Y%m%d%H%M%S)"
+        cp -p "$USER_CONFIG_DIR/prts.conf" "$BACKUP"
+        log "configuration schema $INSTALLED_SCHEMA -> $SHIPPED_SCHEMA, previous file kept at $BACKUP"
+    fi
     install -m 0644 "$PROJECT_ROOT/config/prts.conf" "$USER_CONFIG_DIR/prts.conf"
-    log "installed default configuration to $USER_CONFIG_DIR/prts.conf"
+    log "installed configuration at $USER_CONFIG_DIR/prts.conf (schema $SHIPPED_SCHEMA)"
 else
-    log "keeping existing configuration at $USER_CONFIG_DIR/prts.conf"
+    log "keeping existing configuration at $USER_CONFIG_DIR/prts.conf (schema $INSTALLED_SCHEMA)"
 fi
 
 if [ "$INSTALL_HOOK" -eq 1 ]; then

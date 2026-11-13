@@ -8,41 +8,28 @@
 #include <vector>
 
 #include "service/logo_art.h"
+#include "utils/ansi.h"
 #include "utils/text.h"
 #include "utils/utf8.h"
 
 namespace prts::service {
 namespace {
 
-constexpr int kNoHighlight = -10000;
-constexpr int kLabelWidth = 10;
-constexpr int kElapsedWidth = 8;  // "[00.000]"
-constexpr int kStatusWidth = 6;   // "[ OK ]"
-constexpr int kArtPaceMs = 32;
-constexpr double kSweepHalfBand = 2.0;
+constexpr int kDiamondRows = 9;
+constexpr int kLabelWidth = 9;
+constexpr int kStatusWidth = 6;
+constexpr int kArtPaceMs = 26;
+constexpr int kFlashMs = 55;
+constexpr int kBarMaxWidth = 56;
 
-std::string statusTag(model::CheckStatus status) {
-    switch (status) {
-        case model::CheckStatus::Ok:
-            return "[ OK ]";
-        case model::CheckStatus::Warn:
-            return "[WARN]";
-        case model::CheckStatus::Fail:
-            return "[FAIL]";
-    }
-    return "[ ?? ]";
-}
+std::string wordmark() { return "P  R  T  S"; }
 
-model::Color statusColor(const model::Palette& palette, model::CheckStatus status) {
-    switch (status) {
-        case model::CheckStatus::Ok:
-            return palette.ok;
-        case model::CheckStatus::Warn:
-            return palette.warn;
-        case model::CheckStatus::Fail:
-            return palette.error;
+std::string repeatCells(const char* cell, int count) {
+    std::string result;
+    for (int index = 0; index < count; ++index) {
+        result.append(cell);
     }
-    return palette.primary;
+    return result;
 }
 
 }  // namespace
@@ -54,249 +41,269 @@ BootSequenceService::BootSequenceService(AnimationService& animation, SelfcheckS
     : animation_(animation), selfcheck_(selfcheck), sessionState_(sessionState),
       settings_(settings), logger_(logger) {}
 
-BootSequenceService::Density BootSequenceService::chooseDensity() const {
-    if (animation_.columns() >= settings_.minColumnsFull &&
-        animation_.rows() >= settings_.minRowsFull) {
-        return Density::Full;
-    }
-    return Density::Compact;
+bool BootSequenceService::useFullLayout() const {
+    return animation_.columns() >= settings_.minColumnsFull &&
+           animation_.rows() >= settings_.minRowsFull;
 }
 
 int BootSequenceService::contentWidth() const {
-    const int width = std::min(animation_.columns() - 2, 76);
-    return std::max(width, 30);
+    const int width = std::min(animation_.columns() - 1, 74);
+    return std::max(width, 40);
 }
 
-int BootSequenceService::contentRows() const { return animation_.rows(); }
+std::string BootSequenceService::paint(const std::string& text, const model::Color& color,
+                                       bool bold) const {
+    return animation_.paint(text, color, bold);
+}
 
-std::string BootSequenceService::formatElapsed(std::int64_t milliseconds) {
-    double seconds = static_cast<double>(milliseconds) / 1000.0;
-    if (seconds > 99.999) {
-        seconds = 99.999;
+std::string BootSequenceService::padBetween(const std::string& left,
+                                            const std::string& right) const {
+    const int width = contentWidth();
+    int space = width - static_cast<int>(utils::Text::displayWidth(left)) -
+                static_cast<int>(utils::Text::displayWidth(right));
+    if (space < 1) {
+        space = 1;
     }
-    char buffer[16];
-    std::snprintf(buffer, sizeof(buffer), "%06.3f", seconds);
+    return left + std::string(static_cast<std::size_t>(space), ' ') + right;
+}
+
+std::string BootSequenceService::twoDigits(int value) {
+    char buffer[8];
+    std::snprintf(buffer, sizeof(buffer), "%02d", value);
     return std::string(buffer);
 }
 
-void BootSequenceService::renderHeader() {
-    const model::Palette& palette = animation_.palette();
-    const model::Identity& identity = animation_.identity();
-    const int inner = contentWidth();
-    const std::string horizontal = utils::Text::repeat("\u2500", static_cast<std::size_t>(inner));
-
-    animation_.writeStyled("\u250c" + horizontal + "\u2510", palette.frameDim);
-    animation_.newline();
-
-    const std::string name = identity.systemName;
-    std::string link = "LINK: ACTIVE";
-    const int nameWidth = static_cast<int>(utils::Text::displayWidth(name));
-    const int prefixWidth = 1 + nameWidth + 5;  // space + name + "  \u25b8  "
-    int linkWidth = static_cast<int>(utils::Text::displayWidth(link));
-    int fullBudget = inner - prefixWidth - linkWidth - 1;
-    if (fullBudget < 6) {
-        link = "ACTIVE";
-        linkWidth = static_cast<int>(utils::Text::displayWidth(link));
-        fullBudget = inner - prefixWidth - linkWidth - 1;
+std::string BootSequenceService::formatElapsed(std::int64_t milliseconds) {
+    double seconds = static_cast<double>(milliseconds) / 1000.0;
+    if (seconds > 99.99) {
+        seconds = 99.99;
     }
-    if (fullBudget < 0) {
-        fullBudget = 0;
-    }
-    const std::string fullShown = utils::Text::truncate(identity.systemFullName, static_cast<std::size_t>(fullBudget));
-    int gap = inner - prefixWidth - static_cast<int>(utils::Text::displayWidth(fullShown)) -
-              linkWidth - 1;
-    if (gap < 0) {
-        gap = 0;
-    }
+    char buffer[16];
+    std::snprintf(buffer, sizeof(buffer), "%05.2f", seconds);
+    return std::string(buffer);
+}
 
-    animation_.writeStyled("\u2502", palette.frameDim);
-    animation_.write(" ");
-    animation_.writeStyled(name, palette.accentBright, true);
-    animation_.writeStyled("  \u25b8  ", palette.frame, true);
-    animation_.writeStyled(fullShown, palette.primary);
-    animation_.write(std::string(static_cast<std::size_t>(gap), ' '));
-    animation_.writeStyled(link, palette.ok, true);
-    animation_.write(" ");
-    animation_.writeStyled("\u2502", palette.frameDim);
-    animation_.newline();
+std::string BootSequenceService::statusTag(model::CheckStatus status) {
+    switch (status) {
+        case model::CheckStatus::Ok:
+            return "[ OK ]";
+        case model::CheckStatus::Warn:
+            return "[WARN]";
+        case model::CheckStatus::Fail:
+            return "[FAIL]";
+    }
+    return "[ ?? ]";
+}
 
-    animation_.writeStyled("\u2514" + horizontal + "\u2518", palette.frameDim);
+void BootSequenceService::renderRule() {
+    animation_.writeStyled(repeatCells("\u2500", contentWidth()), settings_.palette.rule);
     animation_.newline();
 }
 
-void BootSequenceService::renderBlankLine() { animation_.newline(); }
+void BootSequenceService::renderHeader() {
+    const model::Palette& palette = settings_.palette;
+    const model::Identity& identity = settings_.identity;
+    const int width = contentWidth();
 
-void BootSequenceService::drawGrid(const std::vector<std::string>& rows, int highlightColumn,
-                                   const model::Color& topColor, const model::Color& bottomColor,
-                                   bool paced) {
-    const int inner = contentWidth();
-    const int artWidth = LogoArt::gridWidth(rows);
-    const int leftPad = std::max(0, (inner - artWidth) / 2);
+    animation_.writeStyled("\u258c", palette.accent, true);
+    animation_.writeStyled(" ", palette.muted);
+    animation_.writeStyled(identity.systemName, palette.primary, true);
 
-    for (std::size_t rowIndex = 0; rowIndex < rows.size(); ++rowIndex) {
-        const double position =
-            rows.size() > 1 ? static_cast<double>(rowIndex) / static_cast<double>(rows.size() - 1)
-                            : 0.0;
-        const model::Color baseColor = topColor.mix(bottomColor, position * 0.9);
+    const std::string right = identity.systemTag + "  \u25e4";
+    int space = width - 2 - static_cast<int>(utils::Text::displayWidth(identity.systemName)) -
+                static_cast<int>(utils::Text::displayWidth(right));
+    if (space < 1) {
+        space = 1;
+    }
+    animation_.write(std::string(static_cast<std::size_t>(space), ' '));
+    animation_.writeStyled(identity.systemTag, palette.muted);
+    animation_.write("  ");
+    animation_.writeStyled("\u25e4", palette.accent, true);
+    animation_.newline();
 
-        animation_.write(std::string(static_cast<std::size_t>(leftPad), ' '));
+    animation_.writeStyled("\u258c", palette.accent, true);
+    animation_.writeStyled(" ", palette.muted);
+    animation_.writeStyled(identity.systemFullName, palette.muted);
 
-        // Consecutive cells that share a style are emitted as one run: the
-        // sweep redraws the grid on every frame, so batching keeps the byte
-        // count (and the Pi's CPU load) low.
-        std::string run;
-        model::Color runColor = baseColor;
-        bool runBold = false;
-        auto flushRun = [this, &run, &runColor, &runBold]() {
-            if (!run.empty()) {
-                animation_.writeStyled(run, runColor, runBold);
-                run.clear();
+    const std::string sequence = "NO. " + twoDigits(sequenceNumber_);
+    space = width - 2 - static_cast<int>(utils::Text::displayWidth(identity.systemFullName)) -
+            static_cast<int>(utils::Text::displayWidth(sequence));
+    if (space < 1) {
+        space = 1;
+    }
+    animation_.write(std::string(static_cast<std::size_t>(space), ' '));
+    animation_.writeStyled(sequence, palette.secondary);
+    animation_.newline();
+
+    renderRule();
+}
+
+void BootSequenceService::renderIdentity(bool animate) {
+    const model::Palette& palette = settings_.palette;
+    const LogoArt::Artwork artwork = LogoArt::diamond(kDiamondRows, wordmark(), contentWidth());
+
+    for (std::size_t rowIndex = 0; rowIndex < artwork.rows.size(); ++rowIndex) {
+        const std::string& row = artwork.rows[rowIndex];
+        if (static_cast<int>(rowIndex) == artwork.wordmarkRow && artwork.wordmarkStart >= 0) {
+            const std::vector<std::string> cells = utils::splitUtf8(row);
+            std::string prefix;
+            for (int index = 0; index < artwork.wordmarkStart; ++index) {
+                prefix.append(cells[static_cast<std::size_t>(index)]);
             }
-        };
+            animation_.writeStyled(prefix, palette.secondary);
 
-        const std::vector<std::string> cells = utils::splitUtf8(rows[rowIndex]);
-        for (std::size_t cellIndex = 0; cellIndex < cells.size(); ++cellIndex) {
-            const std::string& cell = cells[cellIndex];
-            if (cell == " ") {
-                flushRun();
-                animation_.write(" ");
-                continue;
+            for (int index = 0; index < artwork.wordmarkLength; ++index) {
+                const std::string& cell = cells[static_cast<std::size_t>(artwork.wordmarkStart + index)];
+                animation_.writeStyled(cell, palette.primary, true);
+                if (animate) {
+                    animation_.flush();
+                    animation_.sleep(std::max(4, settings_.charDelayMs * 2));
+                }
             }
-            const bool highlighted =
-                highlightColumn != kNoHighlight &&
-                std::fabs(static_cast<double>(static_cast<int>(cellIndex) - highlightColumn)) <=
-                    kSweepHalfBand;
-            const model::Color color = highlighted ? animation_.palette().accentBright : baseColor;
-            if (color != runColor || highlighted != runBold) {
-                flushRun();
-                runColor = color;
-                runBold = highlighted;
+
+            std::string suffix;
+            for (std::size_t index = static_cast<std::size_t>(artwork.wordmarkStart +
+                                                              artwork.wordmarkLength);
+                 index < cells.size(); ++index) {
+                suffix.append(cells[index]);
             }
-            run.append(cell);
+            animation_.writeStyled(suffix, palette.secondary);
+            animation_.newline();
+            continue;
         }
-        flushRun();
+
+        animation_.writeStyled(row, palette.secondary);
         animation_.newline();
-        if (paced) {
+        if (animate) {
             animation_.flush();
             animation_.sleep(kArtPaceMs);
         }
     }
+
+    const std::string caption =
+        settings_.identity.systemLocalName + "  \u00b7  " + settings_.identity.accessNote;
+    animation_.writeStyled(utils::Text::center(caption, static_cast<std::size_t>(contentWidth())),
+                           palette.muted);
+    animation_.newline();
 }
 
-void BootSequenceService::drawEmblemFrame(int highlightColumn, bool paced) {
-    const model::Palette& palette = animation_.palette();
-    drawGrid(LogoArt::emblem(), highlightColumn, palette.accentBright, palette.accent, paced);
+void BootSequenceService::renderCompactIdentity(bool animate) {
+    const model::Palette& palette = settings_.palette;
+    const model::Identity& identity = settings_.identity;
+
+    animation_.writeStyled(" \u25c6 ", palette.accent, true);
+    animation_.writeStyled(identity.systemName, palette.primary, true);
+    animation_.writeStyled(" \u25c6", palette.accent, true);
+    animation_.write("   ");
+    const std::string caption = identity.systemLocalName + "  \u00b7  " + identity.accessNote;
+    if (animate) {
+        animation_.typewriter(caption, palette.muted);
+    } else {
+        animation_.writeStyled(caption, palette.muted);
+    }
+    animation_.newline();
 }
 
-void BootSequenceService::drawWordmarkFrame(int highlightColumn, bool paced) {
-    const model::Palette& palette = animation_.palette();
-    drawGrid(LogoArt::wordmark(), highlightColumn, palette.primary, palette.muted, paced);
-}
+void BootSequenceService::renderCheckRow(const model::CheckResult& result, int number,
+                                         bool animate) {
+    const model::Palette& palette = settings_.palette;
+    const int width = contentWidth();
+    const std::string index = " " + twoDigits(number);
+    const std::string label = utils::Text::fit(result.label, kLabelWidth);
+    const int fixed = 3 + 3 + kLabelWidth + 1 + kStatusWidth + 1;
+    const std::size_t valueWidth =
+        static_cast<std::size_t>(std::max(8, width - fixed));
+    const std::string value = utils::Text::fit(result.value, valueWidth);
 
-void BootSequenceService::renderArtwork(bool animate) {
-    drawEmblemFrame(kNoHighlight, true);
-    drawWordmarkFrame(kNoHighlight, true);
+    const std::string tag = statusTag(result.status);
+    const std::string plain = index + "   " + label + " " + value + " " + tag;
 
+    const model::Color statusColor = result.status == model::CheckStatus::Warn
+                                         ? palette.accent
+                                         : (result.status == model::CheckStatus::Fail
+                                                ? palette.danger
+                                                : palette.secondary);
+
+    auto drawColored = [&](bool typeValue) {
+        animation_.writeStyled(index, palette.subtle);
+        animation_.write("   ");
+        animation_.writeStyled(label, palette.muted);
+        animation_.write(" ");
+        if (animate && typeValue) {
+            animation_.typewriter(value, palette.primary);
+        } else {
+            animation_.writeStyled(value, palette.primary);
+        }
+        animation_.write(" ");
+        animation_.writeStyled("[", palette.subtle);
+        animation_.writeStyled(tag.substr(1, tag.size() - 2), statusColor);
+        animation_.writeStyled("]", palette.subtle);
+    };
+
+    drawColored(true);
+    animation_.newline();
     if (!animate) {
         return;
     }
 
-    const int totalRows = static_cast<int>(LogoArt::emblem().size() +
-                                           LogoArt::wordmark().size());
-    const int artWidth = std::max(LogoArt::gridWidth(LogoArt::emblem()),
-                                  LogoArt::gridWidth(LogoArt::wordmark()));
-    const int sweeps = std::max(0, settings_.scanSweeps);
-    for (int sweep = 0; sweep < sweeps; ++sweep) {
-        for (int column = -4; column <= artWidth + 4; column += 3) {
-            animation_.moveUp(totalRows);
-            drawEmblemFrame(column, false);
-            drawWordmarkFrame(column, false);
-            animation_.flush();
-            animation_.sleep(settings_.frameDelayMs);
-        }
-    }
-    logger_.debug("artwork drawn, sweeps=" + std::to_string(sweeps));
-}
-
-void BootSequenceService::renderCompactLogo() {
-    const model::Palette& palette = animation_.palette();
-    const model::Identity& identity = animation_.identity();
-    animation_.writeStyled("  " + LogoArt::compactMark(identity.systemName), palette.accentBright,
-                           true);
-    animation_.writeStyled("   " + identity.systemLocalName, palette.muted);
-    animation_.newline();
-}
-
-void BootSequenceService::renderCheckRow(const model::CheckResult& result, std::int64_t elapsedMs,
-                                        bool animate) {
-    const model::Palette& palette = animation_.palette();
-    const int inner = contentWidth();
-    const int dotsWidth = chooseDensity() == Density::Full ? 12 : 4;
-    const int fixedWidth = 2 + kElapsedWidth + 2 + kLabelWidth + 2 + dotsWidth + 2 + 1 + kStatusWidth;
-    const std::size_t valueWidth =
-        static_cast<std::size_t>(std::max(8, inner - fixedWidth));
-
-    animation_.write("  ");
-    animation_.writeStyled("[" + formatElapsed(elapsedMs) + "]", palette.frameDim);
-    animation_.write("  ");
-    animation_.writeStyled(utils::Text::fit(result.label, kLabelWidth), palette.muted, true);
-    animation_.write("  ");
-    animation_.writeStyled(utils::Text::repeat(".", static_cast<std::size_t>(dotsWidth)),
-                           palette.frameDim);
-    animation_.write("  ");
-
-    const std::string value = utils::Text::fit(result.value, valueWidth);
-    if (animate) {
-        animation_.typewriter(value, palette.primary);
-        animation_.sleep(std::max(0, settings_.checkDelayMs / 2));
-    } else {
-        animation_.writeStyled(value, palette.primary);
-    }
-
-    animation_.write(" ");
-    animation_.writeStyled(statusTag(result.status), statusColor(palette, result.status), true);
-    animation_.newline();
-    if (animate) {
-        animation_.sleep(std::max(0, settings_.checkDelayMs / 2));
+    animation_.sleep(std::max(10, settings_.checkDelayMs / 2));
+    if (settings_.flashFrames > 0) {
+        // The game marks the active element by reversing the block instead of
+        // tinting it: draw the same row black on white for a single frame.
+        animation_.moveUp(1);
+        animation_.clearCurrentLine();
+        animation_.write(utils::Ansi::inverse() + utils::Text::fit(plain, static_cast<std::size_t>(width)) +
+                         utils::Ansi::reset());
+        animation_.flush();
+        animation_.sleep(kFlashMs);
+        animation_.write(utils::Ansi::carriageReturn());
+        animation_.clearCurrentLine();
+        drawColored(false);
+        animation_.newline();
     }
 }
 
 void BootSequenceService::renderChecks(const std::vector<model::CheckResult>& results,
                                        std::int64_t startedAt, bool animate) {
+    (void)startedAt;
+    int number = 1;
     for (const model::CheckResult& result : results) {
-        renderCheckRow(result, animation_.nowMs() - startedAt, animate);
+        renderCheckRow(result, number, animate);
+        ++number;
     }
 }
 
-void BootSequenceService::renderProgress(bool animate) {
-    const model::Palette& palette = animation_.palette();
-    const int inner = contentWidth();
-    const int barWidth = std::max(10, std::min(46, inner - 20));
-    const std::string label = "BOOT SEQUENCE";
+void BootSequenceService::renderProgress(double ratio, std::int64_t elapsedMs, bool animate) {
+    const model::Palette& palette = settings_.palette;
+    const int width = contentWidth();
+    const int barWidth = std::max(10, std::min(kBarMaxWidth, width - 21));
 
     auto frame = [&](double value) {
         const double clamped = std::min(1.0, std::max(0.0, value));
         const int filled = static_cast<int>(std::lround(clamped * barWidth));
         std::string percent = utils::Text::formatFloat(clamped * 100.0, 0) + "%";
-        while (utils::Text::displayWidth(percent) < 4) {
+        while (static_cast<int>(percent.size()) < 4) {
             percent.insert(percent.begin(), ' ');
         }
-        const std::string line =
-            "  " + animation_.paint(label, palette.muted) + " " +
-            animation_.paint("[", palette.frameDim) +
-            animation_.paint(utils::Text::repeat("\u2588", static_cast<std::size_t>(filled)),
-                             palette.accent) +
-            animation_.paint(utils::Text::repeat("\u2591", static_cast<std::size_t>(barWidth - filled)),
-                             palette.frameDim) +
-            animation_.paint("]", palette.frameDim) + " " +
-            animation_.paint(percent, palette.primary, true);
+        const std::string elapsed = formatElapsed(elapsedMs) + "s";
+        const int used = 7 + barWidth;
+        const int right = static_cast<int>(percent.size()) + 2 + static_cast<int>(elapsed.size());
+        const int gap = std::max(1, width - used - right);
+
+        std::string line = " " + paint("BOOT", palette.muted) + "  ";
+        line += paint(repeatCells("\u2588", filled), palette.accent);
+        line += paint(repeatCells("\u2591", barWidth - filled), palette.subtle);
+        line += std::string(static_cast<std::size_t>(gap), ' ');
+        line += paint(percent, palette.secondary);
+        line += "  ";
+        line += paint(elapsed, palette.subtle);
         animation_.overwriteLine(line);
     };
 
     if (!animate) {
         frame(1.0);
     } else {
-        constexpr int kSteps = 12;
+        constexpr int kSteps = 14;
         for (int step = 0; step <= kSteps; ++step) {
             frame(static_cast<double>(step) / static_cast<double>(kSteps));
             animation_.sleep(std::max(8, settings_.frameDelayMs));
@@ -305,69 +312,65 @@ void BootSequenceService::renderProgress(bool animate) {
     animation_.newline();
 }
 
-void BootSequenceService::renderSummary(const std::vector<model::CheckResult>& results,
+void BootSequenceService::renderVerdict(const std::vector<model::CheckResult>& results,
                                         bool animate) {
-    const model::Palette& palette = animation_.palette();
-    const int inner = contentWidth();
+    const model::Palette& palette = settings_.palette;
     const int okCount = SelfcheckService::countByStatus(results, model::CheckStatus::Ok);
     const int warnCount = SelfcheckService::countByStatus(results, model::CheckStatus::Warn);
     const int failCount = SelfcheckService::countByStatus(results, model::CheckStatus::Fail);
 
-    std::string verdict = "ALL SYSTEMS NOMINAL";
-    std::string verdictLocal = "\u5168\u90e8\u7cfb\u7edf\u6b63\u5e38";
-    model::Color color = palette.ok;
+    std::string chinese = "\u5168\u90e8\u6a21\u5757\u54cd\u5e94\u6b63\u5e38";
+    std::string latin = "ALL MODULES NOMINAL";
+    model::Color color = palette.primary;
     if (failCount > 0) {
-        verdict = "SYSTEM FAULT DETECTED";
-        verdictLocal = "\u68c0\u6d4b\u5230\u7cfb\u7edf\u6545\u969c";
-        color = palette.error;
+        chinese = "\u68c0\u6d4b\u5230\u7cfb\u7edf\u6545\u969c";
+        latin = "SYSTEM FAULT DETECTED";
+        color = palette.danger;
     } else if (warnCount > 0) {
-        verdict = "NOMINAL WITH WARNINGS";
-        verdictLocal = "\u7cfb\u7edf\u6b63\u5e38\uff0c\u5b58\u5728\u544a\u8b66";
-        color = palette.warn;
+        chinese = "\u7cfb\u7edf\u6b63\u5e38\uff0c\u5b58\u5728\u544a\u8b66";
+        latin = "NOMINAL WITH WARNINGS";
+        color = palette.accent;
     }
 
-    const std::string right = std::to_string(okCount) + " / " +
-                              std::to_string(results.size()) + " PASSED";
-    const int used = 2 + static_cast<int>(utils::Text::displayWidth("\u25c6 ")) +
-                     static_cast<int>(utils::Text::displayWidth(verdict)) +
-                     static_cast<int>(utils::Text::displayWidth("  /  ")) +
-                     static_cast<int>(utils::Text::displayWidth(verdictLocal));
-    int gap = inner - used - static_cast<int>(utils::Text::displayWidth(right));
-    if (gap < 1) {
-        gap = 1;
-    }
+    const std::string ratio =
+        std::to_string(okCount) + " / " + std::to_string(results.size());
 
-    animation_.write("  ");
-    animation_.writeStyled("\u25c6 ", color, true);
+    animation_.write(" ");
+    animation_.writeStyled("\u25c6", palette.accent, true);
+    animation_.write(" ");
     if (animate) {
-        animation_.typewriter(verdict, color, true);
-        animation_.writeStyled("  /  ", palette.muted);
-        animation_.typewriter(verdictLocal, palette.primary);
+        animation_.typewriter(chinese, color);
     } else {
-        animation_.writeStyled(verdict, color, true);
-        animation_.writeStyled("  /  ", palette.muted);
-        animation_.writeStyled(verdictLocal, palette.primary);
+        animation_.writeStyled(chinese, color);
     }
+    animation_.write("   ");
+    animation_.writeStyled(latin, palette.muted);
+
+    const int used = 1 + 1 + 1 + static_cast<int>(utils::Text::displayWidth(chinese)) + 3 +
+                     static_cast<int>(utils::Text::displayWidth(latin));
+    const int gap = std::max(1, contentWidth() - used -
+                                    static_cast<int>(utils::Text::displayWidth(ratio)));
     animation_.write(std::string(static_cast<std::size_t>(gap), ' '));
-    animation_.writeStyled(right, color);
+    animation_.writeStyled(ratio, palette.secondary);
     animation_.newline();
 }
 
 void BootSequenceService::renderWelcome(const SessionStateService::State& state, bool animate) {
-    const model::Palette& palette = animation_.palette();
-    const model::Identity& identity = animation_.identity();
+    const model::Palette& palette = settings_.palette;
+    const std::string& operatorName = settings_.identity.operatorName;
 
     std::string text;
     if (state.lastLogin.empty()) {
-        text = "\u6b22\u8fce\u63a5\u5165\uff0c" + identity.operatorName +
-               "\u3002PRTS \u5df2\u4e3a\u8be5\u7ec8\u7aef\u5efa\u7acb\u4f1a\u8bdd\u6863\u6848\u3002";
+        text = "\u63a5\u5165\u8bb0\u5f55\uff1a" + operatorName +
+               " \u00b7 \u9996\u6b21\u63a5\u5165\u3002PRTS \u5df2\u5efa\u7acb\u7ec8\u7aef\u6863\u6848\u3002";
     } else {
-        text = "\u6b22\u8fce\u56de\u6765\uff0c" + identity.operatorName + "\u3002\u7b2c " +
-               std::to_string(state.loginCount + 1) + " \u6b21\u63a5\u5165 \u00b7 \u4e0a\u6b21\u767b\u5f55 " +
-               state.lastLogin;
+        text = "\u63a5\u5165\u8bb0\u5f55\uff1a" + operatorName + " \u00b7 \u7b2c " +
+               std::to_string(sequenceNumber_) +
+               " \u6b21\u3002\u4e0a\u6b21\u63a5\u5165 " + state.lastLogin +
+               "\u3002PRTS \u5df2\u5c31\u7eea\uff0c\u7b49\u5f85\u6307\u4ee4\u3002";
     }
 
-    animation_.write("  ");
+    animation_.write(" ");
     if (animate) {
         animation_.typewriter(text, palette.muted, false, std::max(3, settings_.charDelayMs / 2));
     } else {
@@ -377,7 +380,7 @@ void BootSequenceService::renderWelcome(const SessionStateService::State& state,
 }
 
 void BootSequenceService::renderStatusStrip(const model::SystemFacts& facts) {
-    const model::Palette& palette = animation_.palette();
+    const model::Palette& palette = settings_.palette;
     std::vector<std::pair<std::string, std::string>> items;
 
     if (facts.cpuTemperatureC >= 0.0) {
@@ -388,13 +391,16 @@ void BootSequenceService::renderStatusStrip(const model::SystemFacts& facts) {
     items.emplace_back("LOAD", utils::Text::formatFloat(facts.loadAverage1, 2));
     items.emplace_back("UP", utils::Text::formatDuration(facts.uptimeSeconds));
 
-    animation_.write("  ");
+    animation_.write(" ");
+    animation_.writeStyled("\u25b8", palette.accent, true);
     for (std::size_t index = 0; index < items.size(); ++index) {
-        if (index != 0) {
-            animation_.writeStyled("   ", palette.frameDim);
+        animation_.write(" ");
+        animation_.writeStyled(items[index].first, palette.muted);
+        animation_.write(" ");
+        animation_.writeStyled(items[index].second, palette.secondary);
+        if (index + 1 != items.size()) {
+            animation_.write("  ");
         }
-        animation_.writeStyled(items[index].first + " ", palette.muted);
-        animation_.writeStyled(items[index].second, palette.primary);
     }
     animation_.newline();
 }
@@ -405,23 +411,26 @@ BootSequenceService::Outcome BootSequenceService::run(bool animate) {
     facts_ = model::SystemFacts();
     const std::vector<model::CheckResult> results = selfcheck_.run(facts_);
     const SessionStateService::State previous = sessionState_.read();
+    sequenceNumber_ = static_cast<int>(previous.loginCount) + 1;
 
     if (animate) {
         animation_.begin();
     }
 
     renderHeader();
-    if (chooseDensity() == Density::Full) {
-        renderBlankLine();
-        renderArtwork(animate);
-    } else {
-        renderCompactLogo();
-    }
+    animation_.newline();
 
+    if (useFullLayout()) {
+        renderIdentity(animate);
+    } else {
+        renderCompactIdentity(animate);
+    }
+    renderRule();
     renderChecks(results, startedAt, animate);
-    renderProgress(animate);
-    renderBlankLine();
-    renderSummary(results, animate);
+    animation_.newline();
+
+    renderProgress(1.0, animation_.nowMs() - startedAt, animate);
+    renderVerdict(results, animate);
     renderWelcome(previous, animate);
     renderStatusStrip(facts_);
 
