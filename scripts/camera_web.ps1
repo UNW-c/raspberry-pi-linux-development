@@ -71,29 +71,15 @@ $sshOptions = @(
 # node serves the page, but it points nowhere once prts-web stops, which shows
 # up in the browser as ERR_CONNECTION_RESET. Only ssh processes listening on our
 # local port are closed, and only when the page is not answering.
+function Test-CameraPage {
+    return (Test-PrstHttpPage -Port $LocalPort -Path '/status' -Pattern '"frames"') -ge 0
+}
+
 function Stop-StaleCameraTunnels {
     if (-not (Test-PrstRemotePort -HostName '127.0.0.1' -Port $LocalPort -TimeoutMs 400)) {
         return 0
     }
-
-    $count = 0
-    $netstat = & netstat.exe -ano 2>$null
-    foreach ($line in $netstat) {
-        $text = $line.ToString().Trim()
-        if ($text -notmatch ":$LocalPort\s") { continue }
-        if ($text -notmatch 'LISTENING') { continue }
-
-        $fields = $text -split '\s+'
-        $pidText = $fields[$fields.Length - 1]
-        if ($pidText -notmatch '^\d+$') { continue }
-
-        $process = Get-Process -Id ([int]$pidText) -ErrorAction SilentlyContinue
-        if ($null -ne $process -and $process.ProcessName -eq 'ssh') {
-            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-            $count++
-        }
-    }
-    return $count
+    return (Stop-PrstSshListenerOnPort -Port $LocalPort)
 }
 
 # The port may be open but dead. Ask the endpoint for /status instead. curl is

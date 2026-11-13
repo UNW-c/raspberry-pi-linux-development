@@ -92,6 +92,8 @@ prts-mqtt --help       # 帮助
 | `scripts/mqtt_listen.ps1` | Windows | 订阅 MQTT 主题并在控制台按行显示（无需安装客户端） |
 | `scripts/camera_view.ps1` | Windows | 实时显示相机帧，或 `-SaveDir` 存盘 |
 | `scripts/camera_web.bat` / `.ps1` | Windows | 一键：拉起节点侧相机与网页、开 SSH 转发、打开浏览器 |
+| `bin/prts-cam.cmd` | Windows | 命令行入口：`prts-cam [web\|view\|status\|stop]` |
+| `scripts/install_commands.ps1` | Windows | 把 `bin` 加入用户 PATH，之后可全局使用 `prts-cam` |
 | `scripts/start_camera_stack.sh` | 树莓派 | 幂等启动 `prts-camera` 与 `prts-web` |
 | `scripts/provision_pi.sh` | 树莓派 (root) | 安装工具链与编译依赖、建立目录、导出 locale |
 | `scripts/deploy.sh` | 树莓派 (seven) | CMake 编译、跑单测、安装二进制、写入登录钩子 |
@@ -125,8 +127,12 @@ prts-web
 ```
 
 ```powershell
-# 电脑：一键脚本（启动节点侧、开隧道、打开浏览器）
-scripts\camera_web.bat
+# 装一次命令（加入用户 PATH），之后任意目录可用
+powershell -ExecutionPolicy Bypass -File scripts\install_commands.ps1
+
+prts-cam            # 浏览器看画面（自动拉起节点侧 + 开隧道）
+prts-cam status     # 节点进程 / 端点 / 本机隧道
+prts-cam stop       # 停掉
 # 浏览器地址：http://127.0.0.1:18080/
 ```
 

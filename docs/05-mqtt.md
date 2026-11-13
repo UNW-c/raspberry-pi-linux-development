@@ -108,22 +108,32 @@ prts-camera --device /dev/video0 --frame-topic prts/camera/frame
 
 ### 电脑：查看
 
-网页端（推荐，浏览器直接看，不需要任何插件）：
+网页端（推荐，浏览器直接看，不需要任何插件）。装一次命令，之后一条指令：
 
 ```powershell
-# 一键：在节点上拉起 prts-camera + prts-web，开 SSH 本地转发，打开浏览器
-scripts\camera_web.bat
-# 等价命令
-powershell -ExecutionPolicy Bypass -File scripts\camera_web.ps1
+# 首次：把仓库的 bin 目录加入用户 PATH（只改当前用户，可 -Remove 撤销）
+powershell -ExecutionPolicy Bypass -File scripts\install_commands.ps1
+# 新开一个终端后：
+prts-cam                    # 拉起节点侧、开隧道、开浏览器
+prts-cam status             # 看节点进程、端点状态、本机隧道
+prts-cam stop               # 停掉节点侧并关闭本机隧道
+prts-cam view               # 桌面窗口版
+prts-cam help               # 用法
 ```
 
-脚本做四件事（幂等，可重复执行）：
+没装 PATH 也可以直接用：
+
+```powershell
+.\bin\prts-cam web          # 在当前目录是仓库根时
+```
+
+`prts-cam web` 做四件事（幂等，可重复执行）：
 
 1. `ssh` 到节点执行 `scripts/start_camera_stack.sh`，已在跑就不重复启动
-2. 若本地 `18080` 上没有可用的页面（用 `/status` 探活，而不是只看端口），就关掉残留的 `ssh -N`
-   转发并重新建立一个
+2. 用 `GET /status` 探活本机 `18080`（不是只看端口是否 LISTEN）；不通就关掉残留的
+   `ssh -N` 转发并重建
 3. 打开 `http://127.0.0.1:18080/`
-4. 保持隧道，按 `Ctrl+C` 退出并关闭自己建的隧道
+4. 保持隧道，按 `Ctrl+C` 退出并关闭自己建立的隧道
 
 手动方式：
 

@@ -233,6 +233,56 @@ function Remove-PrstPasswordEnvironment {
     $env:DISPLAY = $State.PreviousDisplay
 }
 
+# Probes a local HTTP endpoint without going through the system proxy.
+# Returns the number of bytes in the body, or -1 when the endpoint is not
+# serving (connection refused, reset, timeout, wrong payload).
+function Test-PrstHttpPage {
+    param(
+        [int]$Port,
+        [string]$Path = '/status',
+        [string]$Pattern = '',
+        [int]$TimeoutSeconds = 3
+    )
+
+    $body = & curl.exe --noproxy '*' -s --max-time $TimeoutSeconds "http://127.0.0.1:$Port$Path" 2>$null
+    if ($LASTEXITCODE -ne 0 -or $null -eq $body) {
+        return -1
+    }
+    $text = ($body -join "`n")
+    if ($text.Length -eq 0) {
+        return -1
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Pattern) -and $text -notmatch $Pattern) {
+        return -1
+    }
+    return $text.Length
+}
+
+# Stops ssh processes that hold a local listening port. Used to clean up an
+# orphaned "-L" forward left behind by an interrupted session.
+function Stop-PrstSshListenerOnPort {
+    param([int]$Port)
+
+    $removed = 0
+    $netstat = & netstat.exe -ano 2>$null
+    foreach ($line in $netstat) {
+        $text = $line.ToString().Trim()
+        if ($text -notmatch ":$Port\s") { continue }
+        if ($text -notmatch 'LISTENING') { continue }
+
+        $fields = $text -split '\s+'
+        $pidText = $fields[$fields.Length - 1]
+        if ($pidText -notmatch '^\d+$') { continue }
+
+        $process = Get-Process -Id ([int]$pidText) -ErrorAction SilentlyContinue
+        if ($null -ne $process -and $process.ProcessName -eq 'ssh') {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            $removed++
+        }
+    }
+    return $removed
+}
+
 # Resizes the console window so the boot sequence has room for the full layout.
 # Only the classic console host can be resized; Windows Terminal and non
 # interactive hosts simply ignore the request.
