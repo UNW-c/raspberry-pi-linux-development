@@ -47,6 +47,8 @@ else {
 }
 
 Push-Location $repositoryRoot
+# Git writes progress to stderr; treat those messages as output, not failures.
+$ErrorActionPreference = 'Continue'
 try {
     if (-not $NoCommit) {
         if ([string]::IsNullOrWhiteSpace($Message)) {

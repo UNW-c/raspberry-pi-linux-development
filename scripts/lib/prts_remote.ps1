@@ -152,6 +152,9 @@ function Write-PrstLinkPanel {
 
     $renderRow = {
         param([string]$text, [ConsoleColor]$color)
+        if ($text.Length -gt $inner - 1) {
+            $text = $text.Substring(0, $inner - 1)
+        }
         $padded = (' ' + $text).PadRight($inner)
         Write-Host ('  ' + $vertical + $padded + $vertical) -ForegroundColor $color
     }
