@@ -1,0 +1,21 @@
+# Build output
+build/
+*.o
+*.a
+prts-boot
+prts_tests
+
+# Local scratch space used by ad-hoc ssh operations
+.tmp-ops/
+
+# Editor and OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Logs and archives
+*.log
+*.tar.gz
