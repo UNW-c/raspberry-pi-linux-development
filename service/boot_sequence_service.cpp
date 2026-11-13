@@ -18,7 +18,9 @@ namespace {
 constexpr int kDiamondRows = 9;
 constexpr int kLabelWidth = 9;
 constexpr int kStatusWidth = 6;
+constexpr int kStampWidth = 12;  // "HH:MM:SS.mmm"
 constexpr int kArtPaceMs = 26;
+constexpr int kRippleMs = 60;
 constexpr int kFlashMs = 55;
 constexpr int kBarMaxWidth = 56;
 
@@ -54,17 +56,6 @@ int BootSequenceService::contentWidth() const {
 std::string BootSequenceService::paint(const std::string& text, const model::Color& color,
                                        bool bold) const {
     return animation_.paint(text, color, bold);
-}
-
-std::string BootSequenceService::padBetween(const std::string& left,
-                                            const std::string& right) const {
-    const int width = contentWidth();
-    int space = width - static_cast<int>(utils::Text::displayWidth(left)) -
-                static_cast<int>(utils::Text::displayWidth(right));
-    if (space < 1) {
-        space = 1;
-    }
-    return left + std::string(static_cast<std::size_t>(space), ' ') + right;
 }
 
 std::string BootSequenceService::twoDigits(int value) {
@@ -105,7 +96,7 @@ void BootSequenceService::renderHeader() {
     const model::Identity& identity = settings_.identity;
     const int width = contentWidth();
 
-    animation_.writeStyled("\u258c", palette.accent, true);
+    animation_.writeStyled("\u258c", palette.secondary);
     animation_.writeStyled(" ", palette.muted);
     animation_.writeStyled(identity.systemName, palette.primary, true);
 
@@ -118,15 +109,15 @@ void BootSequenceService::renderHeader() {
     animation_.write(std::string(static_cast<std::size_t>(space), ' '));
     animation_.writeStyled(identity.systemTag, palette.muted);
     animation_.write("  ");
-    animation_.writeStyled("\u25e4", palette.accent, true);
+    animation_.writeStyled("\u25e4", palette.secondary);
     animation_.newline();
 
-    animation_.writeStyled("\u258c", palette.accent, true);
-    animation_.writeStyled(" ", palette.muted);
-    animation_.writeStyled(identity.systemFullName, palette.muted);
-
+    const std::string session = "SESSION " + sessionStamp_;
     const std::string sequence = "NO. " + twoDigits(sequenceNumber_);
-    space = width - 2 - static_cast<int>(utils::Text::displayWidth(identity.systemFullName)) -
+    animation_.writeStyled("\u258c", palette.secondary);
+    animation_.writeStyled(" ", palette.muted);
+    animation_.writeStyled(session, palette.muted);
+    space = width - 2 - static_cast<int>(utils::Text::displayWidth(session)) -
             static_cast<int>(utils::Text::displayWidth(sequence));
     if (space < 1) {
         space = 1;
@@ -140,20 +131,40 @@ void BootSequenceService::renderHeader() {
 
 void BootSequenceService::renderIdentity(bool animate) {
     const model::Palette& palette = settings_.palette;
-    const LogoArt::Artwork artwork = LogoArt::diamond(kDiamondRows, wordmark(), contentWidth());
+    const int width = contentWidth();
 
-    for (std::size_t rowIndex = 0; rowIndex < artwork.rows.size(); ++rowIndex) {
-        const std::string& row = artwork.rows[rowIndex];
-        if (static_cast<int>(rowIndex) == artwork.wordmarkRow && artwork.wordmarkStart >= 0) {
+    // The emblem emerges from an expanding diamond ripple: three hollow frames
+    // grow and fade, then the real outline settles in.
+    if (animate) {
+        const int sizes[] = {3, 5, 7};
+        const model::Color tones[] = {palette.secondary, palette.muted, palette.subtle};
+        for (int frame = 0; frame < 3; ++frame) {
+            const LogoArt::Artwork ripple = LogoArt::diamond(sizes[frame], std::string(), width);
+            for (const std::string& row : ripple.rows) {
+                animation_.write("\r");
+                animation_.writeStyled(row, tones[frame]);
+                animation_.newline();
+            }
+            animation_.flush();
+            animation_.sleep(kRippleMs);
+            animation_.moveUp(sizes[frame]);
+        }
+    }
+
+    const LogoArt::Artwork emblem = LogoArt::diamond(kDiamondRows, wordmark(), width);
+    for (std::size_t rowIndex = 0; rowIndex < emblem.rows.size(); ++rowIndex) {
+        const std::string& row = emblem.rows[rowIndex];
+        if (static_cast<int>(rowIndex) == emblem.wordmarkRow && emblem.wordmarkStart >= 0) {
             const std::vector<std::string> cells = utils::splitUtf8(row);
             std::string prefix;
-            for (int index = 0; index < artwork.wordmarkStart; ++index) {
+            for (int index = 0; index < emblem.wordmarkStart; ++index) {
                 prefix.append(cells[static_cast<std::size_t>(index)]);
             }
             animation_.writeStyled(prefix, palette.secondary);
 
-            for (int index = 0; index < artwork.wordmarkLength; ++index) {
-                const std::string& cell = cells[static_cast<std::size_t>(artwork.wordmarkStart + index)];
+            for (int index = 0; index < emblem.wordmarkLength; ++index) {
+                const std::string& cell =
+                    cells[static_cast<std::size_t>(emblem.wordmarkStart + index)];
                 animation_.writeStyled(cell, palette.primary, true);
                 if (animate) {
                     animation_.flush();
@@ -162,8 +173,8 @@ void BootSequenceService::renderIdentity(bool animate) {
             }
 
             std::string suffix;
-            for (std::size_t index = static_cast<std::size_t>(artwork.wordmarkStart +
-                                                              artwork.wordmarkLength);
+            for (std::size_t index =
+                     static_cast<std::size_t>(emblem.wordmarkStart + emblem.wordmarkLength);
                  index < cells.size(); ++index) {
                 suffix.append(cells[index]);
             }
@@ -179,54 +190,46 @@ void BootSequenceService::renderIdentity(bool animate) {
             animation_.sleep(kArtPaceMs);
         }
     }
-
-    const std::string caption =
-        settings_.identity.systemLocalName + "  \u00b7  " + settings_.identity.accessNote;
-    animation_.writeStyled(utils::Text::center(caption, static_cast<std::size_t>(contentWidth())),
-                           palette.muted);
-    animation_.newline();
 }
 
 void BootSequenceService::renderCompactIdentity(bool animate) {
     const model::Palette& palette = settings_.palette;
     const model::Identity& identity = settings_.identity;
 
-    animation_.writeStyled(" \u25c6 ", palette.accent, true);
-    animation_.writeStyled(identity.systemName, palette.primary, true);
-    animation_.writeStyled(" \u25c6", palette.accent, true);
-    animation_.write("   ");
-    const std::string caption = identity.systemLocalName + "  \u00b7  " + identity.accessNote;
+    animation_.write(" ");
+    animation_.writeStyled("\u25c6", palette.secondary);
+    animation_.write(" ");
     if (animate) {
-        animation_.typewriter(caption, palette.muted);
+        animation_.typewriter(identity.systemName, palette.primary, true);
     } else {
-        animation_.writeStyled(caption, palette.muted);
+        animation_.writeStyled(identity.systemName, palette.primary, true);
     }
+    animation_.write(" ");
+    animation_.writeStyled("\u25c6", palette.secondary);
     animation_.newline();
 }
 
-void BootSequenceService::renderCheckRow(const model::CheckResult& result, int number,
-                                         bool animate) {
+void BootSequenceService::renderCheckRow(const model::CheckResult& result, bool animate) {
     const model::Palette& palette = settings_.palette;
     const int width = contentWidth();
-    const std::string index = " " + twoDigits(number);
+    const std::string stamp = animation_.timestampWithMillis();
     const std::string label = utils::Text::fit(result.label, kLabelWidth);
-    const int fixed = 3 + 3 + kLabelWidth + 1 + kStatusWidth + 1;
-    const std::size_t valueWidth =
-        static_cast<std::size_t>(std::max(8, width - fixed));
+    const int fixed = kStampWidth + 2 + kLabelWidth + 1 + kStatusWidth + 1;
+    const std::size_t valueWidth = static_cast<std::size_t>(std::max(8, width - fixed));
     const std::string value = utils::Text::fit(result.value, valueWidth);
 
     const std::string tag = statusTag(result.status);
-    const std::string plain = index + "   " + label + " " + value + " " + tag;
+    const std::string plain = stamp + "  " + label + " " + value + " " + tag;
 
     const model::Color statusColor = result.status == model::CheckStatus::Warn
-                                         ? palette.accent
+                                         ? palette.warn
                                          : (result.status == model::CheckStatus::Fail
                                                 ? palette.danger
                                                 : palette.secondary);
 
     auto drawColored = [&](bool typeValue) {
-        animation_.writeStyled(index, palette.subtle);
-        animation_.write("   ");
+        animation_.writeStyled(stamp, palette.subtle);
+        animation_.write("  ");
         animation_.writeStyled(label, palette.muted);
         animation_.write(" ");
         if (animate && typeValue) {
@@ -248,11 +251,11 @@ void BootSequenceService::renderCheckRow(const model::CheckResult& result, int n
 
     animation_.sleep(std::max(10, settings_.checkDelayMs / 2));
     if (settings_.flashFrames > 0) {
-        // The game marks the active element by reversing the block instead of
-        // tinting it: draw the same row black on white for a single frame.
+        // Current line marker: the game reverses the block instead of tinting it.
         animation_.moveUp(1);
         animation_.clearCurrentLine();
-        animation_.write(utils::Ansi::inverse() + utils::Text::fit(plain, static_cast<std::size_t>(width)) +
+        animation_.write(utils::Ansi::inverse() +
+                         utils::Text::fit(plain, static_cast<std::size_t>(width)) +
                          utils::Ansi::reset());
         animation_.flush();
         animation_.sleep(kFlashMs);
@@ -264,12 +267,9 @@ void BootSequenceService::renderCheckRow(const model::CheckResult& result, int n
 }
 
 void BootSequenceService::renderChecks(const std::vector<model::CheckResult>& results,
-                                       std::int64_t startedAt, bool animate) {
-    (void)startedAt;
-    int number = 1;
+                                       bool animate) {
     for (const model::CheckResult& result : results) {
-        renderCheckRow(result, number, animate);
-        ++number;
+        renderCheckRow(result, animate);
     }
 }
 
@@ -291,7 +291,7 @@ void BootSequenceService::renderProgress(double ratio, std::int64_t elapsedMs, b
         const int gap = std::max(1, width - used - right);
 
         std::string line = " " + paint("BOOT", palette.muted) + "  ";
-        line += paint(repeatCells("\u2588", filled), palette.accent);
+        line += paint(repeatCells("\u2588", filled), palette.primary);
         line += paint(repeatCells("\u2591", barWidth - filled), palette.subtle);
         line += std::string(static_cast<std::size_t>(gap), ' ');
         line += paint(percent, palette.secondary);
@@ -329,14 +329,13 @@ void BootSequenceService::renderVerdict(const std::vector<model::CheckResult>& r
     } else if (warnCount > 0) {
         chinese = "\u7cfb\u7edf\u6b63\u5e38\uff0c\u5b58\u5728\u544a\u8b66";
         latin = "NOMINAL WITH WARNINGS";
-        color = palette.accent;
+        color = palette.warn;
     }
 
-    const std::string ratio =
-        std::to_string(okCount) + " / " + std::to_string(results.size());
+    const std::string ratio = std::to_string(okCount) + " / " + std::to_string(results.size());
 
     animation_.write(" ");
-    animation_.writeStyled("\u25c6", palette.accent, true);
+    animation_.writeStyled("\u25c6", palette.secondary);
     animation_.write(" ");
     if (animate) {
         animation_.typewriter(chinese, color);
@@ -355,19 +354,17 @@ void BootSequenceService::renderVerdict(const std::vector<model::CheckResult>& r
     animation_.newline();
 }
 
-void BootSequenceService::renderWelcome(const SessionStateService::State& state, bool animate) {
+void BootSequenceService::renderRecord(const SessionStateService::State& state, bool animate) {
     const model::Palette& palette = settings_.palette;
     const std::string& operatorName = settings_.identity.operatorName;
 
     std::string text;
     if (state.lastLogin.empty()) {
-        text = "\u63a5\u5165\u8bb0\u5f55\uff1a" + operatorName +
-               " \u00b7 \u9996\u6b21\u63a5\u5165\u3002PRTS \u5df2\u5efa\u7acb\u7ec8\u7aef\u6863\u6848\u3002";
+        text = "\u63a5\u5165\u8bb0\u5f55  " + operatorName + " \u00b7 \u9996\u6b21\u63a5\u5165";
     } else {
-        text = "\u63a5\u5165\u8bb0\u5f55\uff1a" + operatorName + " \u00b7 \u7b2c " +
-               std::to_string(sequenceNumber_) +
-               " \u6b21\u3002\u4e0a\u6b21\u63a5\u5165 " + state.lastLogin +
-               "\u3002PRTS \u5df2\u5c31\u7eea\uff0c\u7b49\u5f85\u6307\u4ee4\u3002";
+        text = "\u63a5\u5165\u8bb0\u5f55  " + operatorName + " \u00b7 \u7b2c " +
+               std::to_string(sequenceNumber_) + " \u6b21 \u00b7 \u4e0a\u6b21\u63a5\u5165 " +
+               state.lastLogin;
     }
 
     animation_.write(" ");
@@ -392,7 +389,7 @@ void BootSequenceService::renderStatusStrip(const model::SystemFacts& facts) {
     items.emplace_back("UP", utils::Text::formatDuration(facts.uptimeSeconds));
 
     animation_.write(" ");
-    animation_.writeStyled("\u25b8", palette.accent, true);
+    animation_.writeStyled("\u25b8", palette.secondary);
     for (std::size_t index = 0; index < items.size(); ++index) {
         animation_.write(" ");
         animation_.writeStyled(items[index].first, palette.muted);
@@ -412,6 +409,7 @@ BootSequenceService::Outcome BootSequenceService::run(bool animate) {
     const std::vector<model::CheckResult> results = selfcheck_.run(facts_);
     const SessionStateService::State previous = sessionState_.read();
     sequenceNumber_ = static_cast<int>(previous.loginCount) + 1;
+    sessionStamp_ = animation_.wallClock("%Y-%m-%d %H:%M:%S");
 
     if (animate) {
         animation_.begin();
@@ -425,13 +423,15 @@ BootSequenceService::Outcome BootSequenceService::run(bool animate) {
     } else {
         renderCompactIdentity(animate);
     }
+    animation_.newline();
     renderRule();
-    renderChecks(results, startedAt, animate);
+
+    renderChecks(results, animate);
     animation_.newline();
 
     renderProgress(1.0, animation_.nowMs() - startedAt, animate);
     renderVerdict(results, animate);
-    renderWelcome(previous, animate);
+    renderRecord(previous, animate);
     renderStatusStrip(facts_);
 
     if (animate) {

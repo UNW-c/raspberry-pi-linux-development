@@ -53,6 +53,7 @@ class FakeClock : public driver::IClock {
 public:
     std::int64_t steadyMillis() const override { return current_; }
     std::string wallClock(const std::string&) const override { return "2026-01-01 08:00:00"; }
+    std::string timestampWithMillis() const override { return "08:00:00.000"; }
     void sleepMillis(int milliseconds) override { current_ += milliseconds; }
 
     std::int64_t current_{0};

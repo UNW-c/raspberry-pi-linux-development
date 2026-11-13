@@ -126,17 +126,11 @@ model::BootSettings ConfigService::buildSettings() const {
     settings.palette.secondary = getColor("colors.secondary", settings.palette.secondary);
     settings.palette.muted = getColor("colors.muted", settings.palette.muted);
     settings.palette.subtle = getColor("colors.subtle", settings.palette.subtle);
-    settings.palette.accent = getColor("colors.accent", settings.palette.accent);
-    settings.palette.accentBright = getColor("colors.accent_bright", settings.palette.accentBright);
+    settings.palette.warn = getColor("colors.warn", settings.palette.warn);
     settings.palette.danger = getColor("colors.danger", settings.palette.danger);
 
     settings.identity.systemName = getString("identity.system_name", settings.identity.systemName);
-    settings.identity.systemFullName =
-        getString("identity.system_full_name", settings.identity.systemFullName);
-    settings.identity.systemLocalName =
-        getString("identity.system_local_name", settings.identity.systemLocalName);
     settings.identity.systemTag = getString("identity.system_tag", settings.identity.systemTag);
-    settings.identity.accessNote = getString("identity.access_note", settings.identity.accessNote);
     settings.identity.operatorName =
         getString("identity.operator", settings.identity.operatorName);
 

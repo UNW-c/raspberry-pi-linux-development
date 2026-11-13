@@ -17,6 +17,10 @@ public:
     // Wall clock in local time, formatted with strftime semantics.
     virtual std::string wallClock(const std::string& format) const = 0;
 
+    // Local wall clock with millisecond precision, "HH:MM:SS.mmm". Used by the
+    // self-check log, where each line carries the time it was emitted.
+    virtual std::string timestampWithMillis() const = 0;
+
     virtual void sleepMillis(int milliseconds) = 0;
 };
 

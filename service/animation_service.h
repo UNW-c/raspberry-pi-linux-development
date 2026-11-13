@@ -46,6 +46,7 @@ public:
     void flush();
     bool isInteractive() const { return terminal_.isInteractive(); }
     std::string wallClock(const std::string& format) const { return clock_.wallClock(format); }
+    std::string timestampWithMillis() const { return clock_.timestampWithMillis(); }
 
     void sleep(int milliseconds);
     std::int64_t nowMs() const { return clock_.steadyMillis(); }

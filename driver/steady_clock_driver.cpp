@@ -22,6 +22,19 @@ std::string SteadyClockDriver::wallClock(const std::string& format) const {
     return std::string(buffer);
 }
 
+std::string SteadyClockDriver::timestampWithMillis() const {
+    const auto now = std::chrono::system_clock::now();
+    const std::time_t seconds = std::chrono::system_clock::to_time_t(now);
+    const auto millis =
+        std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
+    std::tm local{};
+    localtime_r(&seconds, &local);
+    char buffer[32] = {0};
+    std::snprintf(buffer, sizeof(buffer), "%02d:%02d:%02d.%03d", local.tm_hour, local.tm_min,
+                  local.tm_sec, static_cast<int>(millis.count()));
+    return std::string(buffer);
+}
+
 void SteadyClockDriver::sleepMillis(int milliseconds) {
     if (milliseconds > 0) {
         std::this_thread::sleep_for(std::chrono::milliseconds(milliseconds));

@@ -46,9 +46,10 @@ PRTS_TEST(boot_sequence_full_layout) {
     PRTS_CHECK_EQ(outcome.failCount, 0);
     PRTS_CHECK_EQ(fixture.terminal.lineCount(), 27);
     PRTS_CHECK(fixture.terminal.contains("PRTS"));
-    PRTS_CHECK(fixture.terminal.contains("PRIMARY RHODES ISLAND TERMINAL SYSTEM"));
     PRTS_CHECK(fixture.terminal.contains("RHODES ISLAND"));
+    PRTS_CHECK(fixture.terminal.contains("SESSION 2026-01-01 08:00:00"));
     PRTS_CHECK(fixture.terminal.contains("NO. 01"));
+    PRTS_CHECK(fixture.terminal.contains("08:00:00.000"));
     PRTS_CHECK(fixture.terminal.contains("KERNEL"));
     PRTS_CHECK(fixture.terminal.contains("[ OK ]"));
     PRTS_CHECK(fixture.terminal.contains("BOOT"));
@@ -61,7 +62,7 @@ PRTS_TEST(boot_sequence_compact_layout) {
 
     fixture.boot.run(false);
 
-    PRTS_CHECK_EQ(fixture.terminal.lineCount(), 18);
+    PRTS_CHECK_EQ(fixture.terminal.lineCount(), 19);
     PRTS_CHECK(fixture.terminal.contains("\u25c6 PRTS \u25c6"));
     PRTS_CHECK(fixture.terminal.contains("MEM"));
 }
@@ -89,4 +90,15 @@ PRTS_TEST(boot_sequence_uses_diamond_artwork_in_full_layout) {
 
     PRTS_CHECK(fixture.terminal.contains("P  R  T  S"));
     PRTS_CHECK_EQ(fixture.terminal.lineCount(), 27);
+}
+
+PRTS_TEST(boot_sequence_has_no_invented_labels) {
+    Fixture fixture;
+    fixture.terminal.size_ = {100, 40};
+
+    fixture.boot.run(false);
+
+    // The sequence must only print names from the setting or measured data.
+    PRTS_CHECK(!fixture.terminal.contains("\u539f\u751f\u7f57\u5fb7\u5c9b\u7ec8\u7aef\u670d\u52a1"));
+    PRTS_CHECK(!fixture.terminal.contains("\u8bbf\u95ee\u6743\u9650"));
 }

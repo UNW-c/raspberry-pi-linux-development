@@ -14,12 +14,13 @@
 
 namespace prts::service {
 
-// Composes the PRTS terminal sequence: a gold-ruled header, the diamond
-// emblem, seven numbered self-check rows, the boot bar and the closing record.
+// Composes the PRTS terminal sequence: a monochrome header, the diamond emblem
+// (drawn by an expanding ripple), a timestamped self-check log, the boot bar
+// and the closing record.
 //
-// Visual language: monochrome first (white and greys), one warm gold for the
-// active elements, hairline rules, numbered rows, and the diamond (Originium)
-// motif. Colour never carries meaning on its own - the status word does.
+// Everything printed here is either a name from the setting or measured data -
+// no invented labels. Emphasis comes from brightness and inverse video; colour
+// is reserved for the two fault states.
 class BootSequenceService {
 public:
     struct Outcome {
@@ -43,16 +44,14 @@ private:
     void renderRule();
     void renderIdentity(bool animate);
     void renderCompactIdentity(bool animate);
-    void renderChecks(const std::vector<model::CheckResult>& results, std::int64_t startedAt,
-                      bool animate);
-    void renderCheckRow(const model::CheckResult& result, int number, bool animate);
+    void renderChecks(const std::vector<model::CheckResult>& results, bool animate);
+    void renderCheckRow(const model::CheckResult& result, bool animate);
     void renderProgress(double ratio, std::int64_t elapsedMs, bool animate);
     void renderVerdict(const std::vector<model::CheckResult>& results, bool animate);
-    void renderWelcome(const SessionStateService::State& state, bool animate);
+    void renderRecord(const SessionStateService::State& state, bool animate);
     void renderStatusStrip(const model::SystemFacts& facts);
 
     std::string paint(const std::string& text, const model::Color& color, bool bold = false) const;
-    std::string padBetween(const std::string& left, const std::string& right) const;
 
     static std::string statusTag(model::CheckStatus status);
     static std::string formatElapsed(std::int64_t milliseconds);
@@ -65,6 +64,7 @@ private:
     utils::Logger& logger_;
 
     model::SystemFacts facts_;
+    std::string sessionStamp_;
     int sequenceNumber_{1};
 };
 

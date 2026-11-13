@@ -57,17 +57,4 @@ LogoArt::Artwork LogoArt::diamond(int rows, const std::string& wordmark, int wid
     return artwork;
 }
 
-std::string LogoArt::compactLine(const std::string& systemName, const std::string& localName,
-                                 const std::string& accessNote) {
-    return "\u25c6 " + systemName + " \u25c6   " + localName + "  \u00b7  " + accessNote;
-}
-
-int LogoArt::gridWidth(const std::vector<std::string>& rows) {
-    int width = 0;
-    for (const std::string& row : rows) {
-        width = std::max(width, static_cast<int>(utils::Text::displayWidth(row)));
-    }
-    return width;
-}
-
 }  // namespace prts::service

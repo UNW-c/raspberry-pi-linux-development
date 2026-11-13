@@ -21,12 +21,6 @@ public:
     // row. The 45 degree slope is faked with 2 cells per step because terminal
     // cells are about twice as tall as they are wide.
     static Artwork diamond(int rows, const std::string& wordmark, int width);
-
-    // Single line fallback used by the compact layout.
-    static std::string compactLine(const std::string& systemName, const std::string& localName,
-                                   const std::string& accessNote);
-
-    static int gridWidth(const std::vector<std::string>& rows);
 };
 
 }  // namespace prts::service

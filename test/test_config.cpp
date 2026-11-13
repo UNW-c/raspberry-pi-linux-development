@@ -34,7 +34,7 @@ PRTS_TEST(config_reads_sections_and_types) {
                << "char_delay_ms = 4\n"
                << "min_rows_full = 34\n"
                << "[colors]\n"
-               << "accent = #D9A441\n"
+               << "warn = #C9A227\n"
                << "danger = #FF8800\n"
                << "[identity]\n"
                << "operator = seven\n";
@@ -49,8 +49,8 @@ PRTS_TEST(config_reads_sections_and_types) {
     PRTS_CHECK_EQ(config.getInt("general.min_rows_full", 30), 34);
     PRTS_CHECK_EQ(config.getInt("general.check_delay_ms", 70), 70);
 
-    const prts::model::Color accent = config.getColor("colors.accent", prts::model::Color());
-    PRTS_CHECK(accent == prts::model::Color(0xD9, 0xA4, 0x41));
+    const prts::model::Color warn = config.getColor("colors.warn", prts::model::Color());
+    PRTS_CHECK(warn == prts::model::Color(0xC9, 0xA2, 0x27));
     PRTS_CHECK_EQ(config.getString("identity.operator", "nobody"), std::string("seven"));
 
     const prts::model::BootSettings settings = config.buildSettings();

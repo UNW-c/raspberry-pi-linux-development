@@ -6,29 +6,26 @@
 
 namespace prts::model {
 
-// Colour roles of the PRTS terminal. The system is monochrome first: white and
-// greys carry the information, a single warm gold marks the active elements,
-// and red is reserved for faults. Values follow the published Arknights design
-// tokens (terminal theme) so the palette stays recognisable.
+// Colour roles of the PRTS terminal. The interface is monochrome: white and
+// greys carry every piece of information, and colour only ever appears as a
+// state - amber for a warning, red for a fault. Structure is expressed with
+// hairlines and inverse video, never with a decorative tint.
 struct Palette {
     Color background{0x00, 0x00, 0x00};
-    Color rule{0x33, 0x33, 0x33};
-    Color primary{0xF2, 0xF2, 0xF2};
-    Color secondary{0xC6, 0xC6, 0xC6};
+    Color rule{0x2E, 0x2E, 0x2E};
+    Color primary{0xF0, 0xF0, 0xF0};
+    Color secondary{0xBF, 0xBF, 0xBF};
     Color muted{0x8A, 0x8A, 0x8A};
-    Color subtle{0x5C, 0x5C, 0x5C};
-    Color accent{0xD9, 0xA4, 0x41};
-    Color accentBright{0xF0, 0xC6, 0x74};
-    Color danger{0xD4, 0x48, 0x3B};
+    Color subtle{0x5A, 0x5A, 0x5A};
+    Color warn{0xC9, 0xA2, 0x27};
+    Color danger{0xC0, 0x39, 0x2B};
 };
 
-// Textual identity of the terminal. Mirrors the [identity] config section.
+// Textual identity of the terminal. Only names that exist in the setting are
+// used here; everything else printed by the sequence is measured data.
 struct Identity {
     std::string systemName{"PRTS"};
-    std::string systemFullName{"PRIMARY RHODES ISLAND TERMINAL SYSTEM"};
-    std::string systemLocalName{"原生罗德岛终端服务"};
     std::string systemTag{"RHODES ISLAND"};
-    std::string accessNote{"访问权限已确认"};
     std::string operatorName{"seven"};
 };
 

@@ -8,6 +8,7 @@ class SteadyClockDriver final : public IClock {
 public:
     std::int64_t steadyMillis() const override;
     std::string wallClock(const std::string& format) const override;
+    std::string timestampWithMillis() const override;
     void sleepMillis(int milliseconds) override;
 };
 
