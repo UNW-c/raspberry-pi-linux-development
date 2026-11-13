@@ -75,6 +75,7 @@ prts-boot --version    # 版本
 | `scripts/connect_prts.ps1` / `.cmd` | Windows | 解析主机、自动填充密码、打开 SSH 会话，失败时给出诊断且不重试 |
 | `scripts/create_shortcut.ps1` | Windows | 在桌面创建 PRTS 快捷方式 |
 | `scripts/sync_to_pi.ps1` | Windows | 打包 → scp → 远端解包 → 编译 → 安装 |
+| `scripts/push_all.ps1` | Windows | 提交并同时推送 gitee 与 github（自动带上代理） |
 | `scripts/provision_pi.sh` | 树莓派 (root) | 安装工具链与编译依赖、建立目录、导出 locale |
 | `scripts/deploy.sh` | 树莓派 (seven) | CMake 编译、跑单测、安装二进制、写入登录钩子 |
 
@@ -102,17 +103,25 @@ accent = #11AFCF          ; PRTS 青色强调色
 1. 本地编辑源码（工作区即 git 仓库）。
 2. `powershell -File scripts\sync_to_pi.ps1` 同步并编译。
 3. 重新登录 SSH 验证动画；`prts-boot --check` 只看数据。
-4. 提交并推送：
+4. 提交并推送（一次完成本地提交 + 两个远端）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\push_all.ps1 -Message "feat: ..."
+```
+
+也可以手动执行：
 
 ```powershell
 git add -A
 git commit -m "feat: ..."
 git push gitee main
+$env:HTTPS_PROXY = "http://127.0.0.1:10808"   # GitHub 需要本地代理
 git push github main
 ```
 
 > 备注：本机 git 需使用 OpenSSL TLS 后端（`git config --global http.sslBackend openssl`），
-> 否则 schannel 在受限环境下会报 `SEC_E_NO_CREDENTIALS`。
+> 否则 schannel 在受限环境下会报 `SEC_E_NO_CREDENTIALS`。GitHub 推送依赖
+> `config/connection.ini` 中 `[git] github_proxy` 配置的本地代理。
 
 ## 文档
 
