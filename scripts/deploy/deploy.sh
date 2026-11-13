@@ -2,13 +2,13 @@
 # PRTS terminal service - build, test and install on the Raspberry Pi.
 #
 # Run as the operator (no sudo needed):
-#   bash scripts/deploy.sh [--skip-tests] [--no-hook]
+#   bash scripts/deploy/deploy.sh [--skip-tests] [--no-hook]
 #
 # The login hook is appended to ~/.bashrc once; the marker makes the operation
 # idempotent.
 set -euo pipefail
 
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BUILD_DIR="${PROJECT_ROOT}/build"
 INSTALL_BIN_DIR="${HOME}/.local/bin"
 USER_CONFIG_DIR="${HOME}/.config/prts"
@@ -40,7 +40,7 @@ log() {
 for tool in cmake g++ make; do
     if ! command -v "$tool" >/dev/null 2>&1; then
         log "missing build tool: $tool"
-        log "run scripts/provision_pi.sh first"
+        log "run scripts/setup/provision_pi.sh first"
         exit 1
     fi
 done
@@ -67,6 +67,7 @@ install -m 0755 "$BUILD_DIR/prts-boot" "$INSTALL_BIN_DIR/prts-boot"
 install -m 0755 "$BUILD_DIR/prts-mqtt" "$INSTALL_BIN_DIR/prts-mqtt"
 install -m 0755 "$BUILD_DIR/prts-camera" "$INSTALL_BIN_DIR/prts-camera"
 install -m 0755 "$BUILD_DIR/prts-web" "$INSTALL_BIN_DIR/prts-web"
+install -m 0755 "$PROJECT_ROOT/scripts/camera/prts-camera-web.sh" "$INSTALL_BIN_DIR/prts-camera-web"
 
 # The configuration schema evolves with the binary. A stale installed copy is
 # backed up and replaced so that an old palette or pacing cannot silently

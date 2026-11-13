@@ -3,12 +3,12 @@
 ## 组成
 
 ```
-树莓派  prts-mqtt publish ──►  mosquitto (:1883)  ──►  Windows  scripts/mqtt_listen.ps1
+树莓派  prts-mqtt publish ──►  mosquitto (:1883)  ──►  Windows  scripts/mqtt/mqtt_listen.ps1
 ```
 
 - **broker**：树莓派上的 mosquitto，监听 `0.0.0.0:1883`，匿名访问、不持久化（家庭内网）
 - **publisher**：`prts-mqtt publish`，C++ 手写 MQTT 3.1.1，不依赖 libmosquitto
-- **subscriber**：树莓派上的 `prts-mqtt subscribe`，或 Windows 上的 `scripts/mqtt_listen.ps1`
+- **subscriber**：树莓派上的 `prts-mqtt subscribe`，或 Windows 上的 `scripts/mqtt/mqtt_listen.ps1`
 
 ## 主题约定
 
@@ -38,8 +38,8 @@
 Windows 侧监听（默认 `prts/#`，Ctrl+C 退出）：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\mqtt_listen.ps1
-powershell -ExecutionPolicy Bypass -File scripts\mqtt_listen.ps1 -Topic 'prts/telemetry' -Count 5
+powershell -ExecutionPolicy Bypass -File scripts\mqtt\mqtt_listen.ps1
+powershell -ExecutionPolicy Bypass -File scripts\mqtt\mqtt_listen.ps1 -Topic 'prts/telemetry' -Count 5
 ```
 
 树莓派侧发布与自测：
@@ -112,7 +112,7 @@ prts-camera --device /dev/video0 --frame-topic prts/camera/frame
 
 ```powershell
 # 首次：把仓库的 bin 目录加入用户 PATH（只改当前用户，可 -Remove 撤销）
-powershell -ExecutionPolicy Bypass -File scripts\install_commands.ps1
+powershell -ExecutionPolicy Bypass -File scripts\setup\install_commands.ps1
 # 新开一个终端后：
 prts-cam                    # 拉起节点侧、开隧道、开浏览器
 prts-cam status             # 看节点进程、端点状态、本机隧道
@@ -129,7 +129,7 @@ prts-cam help               # 用法
 
 `prts-cam web` 做四件事（幂等，可重复执行）：
 
-1. `ssh` 到节点执行 `scripts/start_camera_stack.sh`，已在跑就不重复启动
+1. `ssh` 到节点执行 `prts-camera-web start`，已在跑就不重复启动
 2. 用 `GET /status` 探活本机 `18080`（不是只看端口是否 LISTEN）；不通就关掉残留的
    `ssh -N` 转发并重建
 3. 打开 `http://127.0.0.1:18080/`
@@ -166,13 +166,13 @@ ssh -L 127.0.0.1:18080:127.0.0.1:8080 seven@PRTS.local
 窗口版（WinForms，直接订阅 MQTT）：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\camera_view.ps1
+powershell -ExecutionPolicy Bypass -File scripts\camera\camera_view.ps1
 ```
 
 存盘模式（无窗口，适合验证链路，收不到帧会在 15 秒后退出）：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\camera_view.ps1 -SaveDir .\frames -Count 3
+powershell -ExecutionPolicy Bypass -File scripts\camera\camera_view.ps1 -SaveDir .\frames -Count 3
 ```
 
 ### 带宽参考

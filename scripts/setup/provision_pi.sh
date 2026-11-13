@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # PRTS terminal service - Raspberry Pi environment provisioning.
 #
-# Run as root:   echo <password> | sudo -S bash scripts/provision_pi.sh --user seven
+# Run as root:   echo <password> | sudo -S bash scripts/setup/provision_pi.sh --user seven
 #
 # The script is idempotent: re-running it only installs what is missing.
 set -euo pipefail

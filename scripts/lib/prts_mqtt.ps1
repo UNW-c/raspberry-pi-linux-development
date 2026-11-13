@@ -203,7 +203,11 @@ function Resolve-PrstBrokerAddress {
     $scriptDirectory = $PSScriptRoot
     . (Join-Path $scriptDirectory 'prts_remote.ps1')
     if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
-        $ConfigPath = Join-Path (Split-Path -Parent $scriptDirectory) 'config\connection.ini'
+        $repositoryRoot = $scriptDirectory
+        while ($repositoryRoot -and -not (Test-Path -LiteralPath (Join-Path $repositoryRoot 'CMakeLists.txt'))) {
+            $repositoryRoot = Split-Path -Parent $repositoryRoot
+        }
+        $ConfigPath = Join-Path $repositoryRoot 'config\connection.ini'
     }
     $values = Read-PrstIniFile -Path $ConfigPath
     $primary = Get-PrstIniValue $values 'ssh.host' 'PRTS.local'

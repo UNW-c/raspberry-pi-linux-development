@@ -13,7 +13,7 @@
 
 ## 已安装工具链
 
-`scripts/provision_pi.sh` 会保证以下软件存在（幂等，只装缺失项）：
+`scripts/setup/provision_pi.sh` 会保证以下软件存在（幂等，只装缺失项）：
 
 - 编译：`build-essential`(gcc 14 / g++ 14 / make 4.4)、`cmake`、`gdb`、`device-tree-compiler`
 - 版本控制与传输：`git`、`rsync`、`curl`
@@ -23,7 +23,7 @@
 执行方式（需要 root）：
 
 ```bash
-echo <密码> | sudo -S bash scripts/provision_pi.sh --user seven --ssh-key /tmp/prts_key.pub
+echo <密码> | sudo -S bash scripts/setup/provision_pi.sh --user seven --ssh-key /tmp/prts_key.pub
 ```
 
 脚本会顺带：

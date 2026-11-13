@@ -2,8 +2,8 @@
 
 ## 1. 连接
 
-- 在工作区内双击 `scripts\connect_prts.bat`，或执行
-  `powershell -ExecutionPolicy Bypass -File scripts\connect_prts.ps1`
+- 在工作区内双击 `scripts\connect\connect_prts.bat`，或执行
+  `powershell -ExecutionPolicy Bypass -File scripts\connect\connect_prts.ps1`
 - 脚本按 `config/connection.ini` 依次尝试 `PRTS.local`、`PRTS` 等候选，先把名字解析成 IP
   再探测 22 端口（避免冷启动时 mDNS 慢导致误判），命中后通过 `SSH_ASKPASS` 把密码交给 ssh
 - 自动把控制台窗口调整为 120x38（仅经典控制台有效，Windows Terminal 忽略该请求）
@@ -36,7 +36,7 @@ gcc 14 / cmake 3.31；同步只传源码（排除 `.git`、`build`），一次�
 
 ### A 的执行链
 
-Windows 侧 `scripts/sync_to_pi.ps1`：
+Windows 侧 `scripts/deploy/sync_to_pi.ps1`：
 
 1. 读 `config/connection.ini`：`host` / `fallback_host` / `user` / `password` / `port` /
    `[project] remote_path`
@@ -44,9 +44,9 @@ Windows 侧 `scripts/sync_to_pi.ps1`：
 3. 打包：`tar.exe -czf %TEMP%\prts-source.tar.gz -C <仓库> --exclude=.git --exclude=build ...`
 4. 上传：`scp -P 22 <archive> seven@<ip>:/tmp/prts-source.tar.gz`
 5. 远端执行一条命令：
-   `mkdir -p ~/raspberry-pi-linux-development && tar -xzf /tmp/... -C ... && cd ... && bash scripts/deploy.sh`
+   `mkdir -p ~/raspberry-pi-linux-development && tar -xzf /tmp/... -C ... && cd ... && bash scripts/deploy/deploy.sh`
 
-树莓派侧 `scripts/deploy.sh`：
+树莓派侧 `scripts/deploy/deploy.sh`：
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -68,22 +68,22 @@ prts-boot --check | tail -n 12          # 冒烟测试
 ```powershell
 # 1. 改 service/selfcheck_service.cpp 与 test/test_selfcheck.cpp
 # 2. 同步并编译（实测：改一个源文件约 12.6 s，无改动约 5.2 s）
-powershell -ExecutionPolicy Bypass -File scripts\sync_to_pi.ps1
+powershell -ExecutionPolicy Bypass -File scripts\deploy\sync_to_pi.ps1
 # 3. 验证：重新登录，或在 Pi 上执行 prts-boot --force
 # 4. 提交并推送两个远端
-powershell -ExecutionPolicy Bypass -File scripts\push_all.ps1 -Message "feat: ..."
+powershell -ExecutionPolicy Bypass -File scripts\deploy\push_all.ps1 -Message "feat: ..."
 ```
 
 只上传不编译（改配置、看文档）：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\sync_to_pi.ps1 -SkipBuild
+powershell -ExecutionPolicy Bypass -File scripts\deploy\sync_to_pi.ps1 -SkipBuild
 ```
 
 跳过测试（明确知道只是改文档/注释）：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\sync_to_pi.ps1 -SkipTests
+powershell -ExecutionPolicy Bypass -File scripts\deploy\sync_to_pi.ps1 -SkipTests
 ```
 
 ### B 路线：直接登录改
@@ -92,7 +92,7 @@ powershell -ExecutionPolicy Bypass -File scripts\sync_to_pi.ps1 -SkipTests
 ssh seven@PRTS.local
 cd ~/raspberry-pi-linux-development
 vim service/boot_sequence_service.cpp
-bash scripts/deploy.sh --skip-tests
+bash scripts/deploy/deploy.sh --skip-tests
 ```
 
 改完记得在本地工作区同步回来（否则下次同步会被覆盖）：把改动在本地重做一遍，或

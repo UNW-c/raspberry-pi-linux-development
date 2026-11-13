@@ -1,9 +1,9 @@
 @echo off
 rem PRTS camera command: prts-cam [web|view|status|stop|help]
-rem Install with scripts\install_commands.ps1 to use it from any directory.
+rem Install with scripts\setup\install_commands.ps1 to use it from any directory.
 setlocal
 chcp 65001 >nul 2>&1
-set "ENTRY=%~dp0..\scripts\prts_cam.ps1"
+set "ENTRY=%~dp0..\scripts\camera\prts_cam.ps1"
 if not exist "%ENTRY%" (
     echo prts-cam: cannot find "%ENTRY%"
     exit /b 2

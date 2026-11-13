@@ -36,9 +36,13 @@ catch {
 }
 
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
-. (Join-Path $scriptDirectory 'lib\prts_remote.ps1')
+$repositoryRoot = $scriptDirectory
+while ($repositoryRoot -and -not (Test-Path -LiteralPath (Join-Path $repositoryRoot 'CMakeLists.txt'))) {
+    $repositoryRoot = Split-Path -Parent $repositoryRoot
+}
+. (Join-Path $repositoryRoot 'scripts\lib\prts_remote.ps1')
 
-$configPath = Join-Path (Split-Path -Parent $scriptDirectory) 'config\connection.ini'
+$configPath = Join-Path $repositoryRoot 'config\connection.ini'
 $localPort = 18080
 
 function Show-Usage {
@@ -46,7 +50,7 @@ function Show-Usage {
     Write-Host '  prts-cam <command> [options]' -ForegroundColor Cyan
     Write-Host ''
     Write-Host '    web       start the node stack, open the tunnel and the browser (default)'
-    Write-Host '    view      open the desktop window (scripts\camera_view.ps1)'
+    Write-Host '    view      open the desktop window (scripts\camera\camera_view.ps1)'
     Write-Host '    status    processes on the node, endpoint and local tunnel'
     Write-Host '    stop      stop the node stack and close the local tunnel'
     Write-Host '    help      this text'
@@ -115,16 +119,15 @@ function ConvertTo-ParameterTable {
 }
 
 function Invoke-RemoteScript {
-    param($Context, [string]$ScriptName)
+    param($Context, [string]$RemoteCommand)
 
     $target = "$($Context.User)@$($Context.Address)"
-    $remotePath = "~/raspberry-pi-linux-development/scripts/$ScriptName"
     $state = New-PrstPasswordEnvironment -Password $Context.Password
     $previous = $ErrorActionPreference
     # ssh writes its progress to stderr; treat that as output, not as a failure.
     $ErrorActionPreference = 'Continue'
     try {
-        & ssh @($Context.Options) $target "bash $remotePath" 2>&1 |
+        & ssh @($Context.Options) $target $RemoteCommand 2>&1 |
             ForEach-Object { Write-Host "  $_" }
         return $LASTEXITCODE
     }
@@ -152,7 +155,7 @@ switch ($Command.ToLowerInvariant()) {
             exit 2
         }
         Write-PrstLinkPanel -Node "$($context.User)@$($context.Name) ($($context.Address))" -State 'STATUS'
-        $null = Invoke-RemoteScript -Context $context -ScriptName 'camera_status.sh'
+        $null = Invoke-RemoteScript -Context $context -RemoteCommand '~/.local/bin/prts-camera-web status'
 
         Write-Host '  --- desktop ---'
         $pageBytes = Test-PrstHttpPage -Port $localPort -Path '/status' -Pattern '"frames"'
@@ -170,7 +173,7 @@ switch ($Command.ToLowerInvariant()) {
             Write-Host '  PRTS: node unreachable.' -ForegroundColor Red
             exit 2
         }
-        $null = Invoke-RemoteScript -Context $context -ScriptName 'camera_stop.sh'
+        $null = Invoke-RemoteScript -Context $context -RemoteCommand '~/.local/bin/prts-camera-web stop'
 
         $closed = Stop-PrstSshListenerOnPort -Port $localPort
         if ($closed -gt 0) {

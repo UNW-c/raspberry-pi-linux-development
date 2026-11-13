@@ -8,10 +8,10 @@
     exported for the github push, so the rest of the session is unaffected.
 
 .EXAMPLE
-    powershell -ExecutionPolicy Bypass -File scripts\push_all.ps1 -Message "feat: ..."
+    powershell -ExecutionPolicy Bypass -File scripts\deploy\push_all.ps1 -Message "feat: ..."
 
 .EXAMPLE
-    powershell -ExecutionPolicy Bypass -File scripts\push_all.ps1 -NoCommit
+    powershell -ExecutionPolicy Bypass -File scripts\deploy\push_all.ps1 -NoCommit
 #>
 [CmdletBinding()]
 param(
@@ -32,9 +32,12 @@ catch {
 }
 
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
-. (Join-Path $scriptDirectory 'lib\prts_remote.ps1')
+$repositoryRoot = $scriptDirectory
+while ($repositoryRoot -and -not (Test-Path -LiteralPath (Join-Path $repositoryRoot 'CMakeLists.txt'))) {
+    $repositoryRoot = Split-Path -Parent $repositoryRoot
+}
+. (Join-Path $repositoryRoot 'scripts\lib\prts_remote.ps1')
 
-$repositoryRoot = Split-Path -Parent $scriptDirectory
 if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
     $ConfigPath = Join-Path $repositoryRoot 'config\connection.ini'
 }

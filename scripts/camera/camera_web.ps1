@@ -14,10 +14,10 @@
     works on the LAN and through a NAT/tunnel exposed SSH port.
 
 .EXAMPLE
-    powershell -ExecutionPolicy Bypass -File scripts\camera_web.ps1
+    powershell -ExecutionPolicy Bypass -File scripts\camera\camera_web.ps1
 
 .EXAMPLE
-    powershell -ExecutionPolicy Bypass -File scripts\camera_web.ps1 -NoBrowser -Seconds 15
+    powershell -ExecutionPolicy Bypass -File scripts\camera\camera_web.ps1 -NoBrowser -Seconds 15
 #>
 [CmdletBinding()]
 param(
@@ -39,10 +39,14 @@ catch {
 }
 
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
-. (Join-Path $scriptDirectory 'lib\prts_remote.ps1')
+$repositoryRoot = $scriptDirectory
+while ($repositoryRoot -and -not (Test-Path -LiteralPath (Join-Path $repositoryRoot 'CMakeLists.txt'))) {
+    $repositoryRoot = Split-Path -Parent $repositoryRoot
+}
+. (Join-Path $repositoryRoot 'scripts\lib\prts_remote.ps1')
 
 if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
-    $ConfigPath = Join-Path (Split-Path -Parent $scriptDirectory) 'config\connection.ini'
+    $ConfigPath = Join-Path $repositoryRoot 'config\connection.ini'
 }
 $values = Read-PrstIniFile -Path $ConfigPath
 $hostName = Get-PrstIniValue $values 'ssh.host' 'PRTS.local'
@@ -102,7 +106,7 @@ $tunnel = $null
 
 try {
     Write-Host '  starting the node side stack ...'
-    & ssh @sshOptions $target 'bash ~/raspberry-pi-linux-development/scripts/start_camera_stack.sh' 2>&1 |
+    & ssh @sshOptions $target '~/.local/bin/prts-camera-web start' 2>&1 |
         ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
 
     if (Test-CameraPage) {
@@ -118,10 +122,12 @@ try {
         Write-Host "  opening ssh tunnel 127.0.0.1:$LocalPort -> 127.0.0.1:$RemotePort ..."
         $arguments = @('-N') + $sshOptions + @(
             '-o', 'ExitOnForwardFailure=yes',
-            '-L', "127.0.0.1:$LocalPort`:$RemotePort",
+            '-L', "127.0.0.1:$LocalPort`:127.0.0.1:$RemotePort",
             $target
         )
-        $tunnel = Start-Process -FilePath 'ssh' -ArgumentList $arguments -WindowStyle Hidden -PassThru
+        $tunnelLog = Join-Path $env:TEMP ("prts-tunnel-" + [guid]::NewGuid().ToString('N') + ".log")
+        $tunnel = Start-Process -FilePath 'ssh' -ArgumentList $arguments -WindowStyle Hidden `
+            -PassThru -RedirectStandardError $tunnelLog
 
         $deadline = (Get-Date).AddSeconds(12)
         $ready = $false
@@ -135,9 +141,16 @@ try {
         }
         if (-not $ready) {
             Write-Host "  tunnel did not come up on port $LocalPort." -ForegroundColor Red
+            if (Test-Path -LiteralPath $tunnelLog) {
+                Get-Content -LiteralPath $tunnelLog -ErrorAction SilentlyContinue |
+                    Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                    ForEach-Object { Write-Host "  ssh: $_" -ForegroundColor DarkYellow }
+                Remove-Item -LiteralPath $tunnelLog -Force -ErrorAction SilentlyContinue
+            }
             Write-Host '  close whatever holds that port, or pass -LocalPort 18081.' -ForegroundColor Yellow
             exit 3
         }
+        Remove-Item -LiteralPath $tunnelLog -Force -ErrorAction SilentlyContinue
     }
 
     $url = "http://127.0.0.1:$LocalPort/"

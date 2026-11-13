@@ -5,13 +5,13 @@
 .DESCRIPTION
     Packs the working tree (git metadata and build output excluded), copies the
     archive over SSH, extracts it into the configured remote path and runs
-    scripts/deploy.sh.
+    scripts/deploy/deploy.sh.
 
 .EXAMPLE
-    powershell -ExecutionPolicy Bypass -File scripts\sync_to_pi.ps1
+    powershell -ExecutionPolicy Bypass -File scripts\deploy\sync_to_pi.ps1
 
 .EXAMPLE
-    powershell -ExecutionPolicy Bypass -File scripts\sync_to_pi.ps1 -SkipBuild
+    powershell -ExecutionPolicy Bypass -File scripts\deploy\sync_to_pi.ps1 -SkipBuild
 #>
 [CmdletBinding()]
 param(
@@ -32,9 +32,12 @@ catch {
 }
 
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
-. (Join-Path $scriptDirectory 'lib\prts_remote.ps1')
+$repositoryRoot = $scriptDirectory
+while ($repositoryRoot -and -not (Test-Path -LiteralPath (Join-Path $repositoryRoot 'CMakeLists.txt'))) {
+    $repositoryRoot = Split-Path -Parent $repositoryRoot
+}
+. (Join-Path $repositoryRoot 'scripts\lib\prts_remote.ps1')
 
-$repositoryRoot = Split-Path -Parent $scriptDirectory
 if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
     $ConfigPath = Join-Path $repositoryRoot 'config\connection.ini'
 }
@@ -99,10 +102,10 @@ try {
     }
 
     if ($SkipBuild) {
-        $remoteCommand = "mkdir -p '$RemotePath' && tar -xzf /tmp/$archiveName -C '$RemotePath' && echo EXTRACTED"
+        $remoteCommand = "mkdir -p '$RemotePath' && rm -rf '$RemotePath/scripts' && tar -xzf /tmp/$archiveName -C '$RemotePath' && echo EXTRACTED"
     }
     else {
-        $remoteCommand = "mkdir -p '$RemotePath' && tar -xzf /tmp/$archiveName -C '$RemotePath' && cd '$RemotePath' && bash scripts/deploy.sh $($deployArguments -join ' ')"
+        $remoteCommand = "mkdir -p '$RemotePath' && rm -rf '$RemotePath/scripts' && tar -xzf /tmp/$archiveName -C '$RemotePath' && cd '$RemotePath' && bash scripts/deploy/deploy.sh $($deployArguments -join ' ')"
     }
 
     Write-Host '  building on the Pi ...'

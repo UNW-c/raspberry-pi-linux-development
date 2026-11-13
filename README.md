@@ -28,14 +28,14 @@
 
 ## 快速开始
 
-连接入口就在工作区内，双击 `scripts\connect_prts.bat` 即可（会自己调大控制台窗口）：
+连接入口就在工作区内，双击 `scripts\connect\connect_prts.bat` 即可（会自己调大控制台窗口）：
 
 ```powershell
-# 1. 建立连接：双击 scripts\connect_prts.bat，或命令行执行
-powershell -ExecutionPolicy Bypass -File scripts\connect_prts.ps1
+# 1. 建立连接：双击 scripts\connect\connect_prts.bat，或命令行执行
+powershell -ExecutionPolicy Bypass -File scripts\connect\connect_prts.ps1
 
 # 2. 把工程同步到树莓派并编译安装
-powershell -ExecutionPolicy Bypass -File scripts\sync_to_pi.ps1
+powershell -ExecutionPolicy Bypass -File scripts\deploy\sync_to_pi.ps1
 ```
 
 之后重新 SSH 登录即可看到 PRTS 引导序列。临时跳过：
@@ -56,8 +56,9 @@ PRTS_SKIP_BOOT=1 ssh seven@PRTS.local
 ├── utils/         工具层     UTF-8 文本宽度、ANSI 序列、日志、字符串切分
 ├── config/        配置层     prts.conf（动画）与 connection.ini（连接）
 ├── test/          测试层     自包含测试框架 + 假实现
-├── scripts/       工具脚本   Windows 连接/同步、树莓派配置/部署
-└── docs/          文档       环境、架构、动画规格、工作流
+├── scripts/       工具脚本   按用途分目录：lib / connect / deploy / camera / mqtt / setup
+├── bin/           命令入口   prts-cam.cmd（加入 PATH 后全局可用）
+└── docs/          文档       环境、架构、动画规格、工作流、MQTT
 ```
 
 依赖方向严格自上而下：`app → controller → service → model`，`service` 通过接口依赖
@@ -83,29 +84,30 @@ prts-mqtt --help       # 帮助
 
 ## 脚本
 
-| 脚本 | 运行位置 | 作用 |
-| --- | --- | --- |
-| `scripts/connect_prts.bat` | Windows | 双击即用的连接入口，调用下面的 ps1 并调大控制台窗口 |
-| `scripts/connect_prts.ps1` | Windows | 解析主机、自动填充密码、打开 SSH 会话，失败时给出诊断且不重试 |
-| `scripts/sync_to_pi.ps1` | Windows | 打包 → scp → 远端解包 → 编译 → 安装 |
-| `scripts/push_all.ps1` | Windows | 提交并同时推送 gitee 与 github（自动带上代理） |
-| `scripts/mqtt_listen.ps1` | Windows | 订阅 MQTT 主题并在控制台按行显示（无需安装客户端） |
-| `scripts/camera_view.ps1` | Windows | 实时显示相机帧，或 `-SaveDir` 存盘 |
-| `scripts/camera_web.bat` / `.ps1` | Windows | 一键：拉起节点侧相机与网页、开 SSH 转发、打开浏览器 |
-| `bin/prts-cam.cmd` | Windows | 命令行入口：`prts-cam [web\|view\|status\|stop]` |
-| `scripts/install_commands.ps1` | Windows | 把 `bin` 加入用户 PATH，之后可全局使用 `prts-cam` |
-| `scripts/start_camera_stack.sh` | 树莓派 | 幂等启动 `prts-camera` 与 `prts-web` |
-| `scripts/provision_pi.sh` | 树莓派 (root) | 安装工具链与编译依赖、建立目录、导出 locale |
-| `scripts/deploy.sh` | 树莓派 (seven) | CMake 编译、跑单测、安装二进制、写入登录钩子 |
-| `scripts/inspect_camera.sh` | 树莓派 | 列出 USB / V4L2 / 设备树里与相机相关的信息 |
+脚本按用途分目录，见 [scripts/README.md](scripts/README.md)。
+
+| 目录 | 文件 | 运行位置 | 作用 |
+| --- | --- | --- | --- |
+| `scripts/connect/` | `connect_prts.bat` / `.ps1` | Windows | 双击即连：解析主机、自动填密码、开 SSH 会话 |
+| `scripts/deploy/` | `sync_to_pi.ps1` | Windows | 打包 → scp → 远端解包 → 编译 → 安装 |
+| `scripts/deploy/` | `push_all.ps1` | Windows | 提交并同时推送 gitee 与 github |
+| `scripts/deploy/` | `deploy.sh` | 树莓派 | CMake 编译、跑单测、安装二进制、写登录钩子 |
+| `scripts/camera/` | `camera_web.bat` / `.ps1` | Windows | 双击即看：拉起节点侧、开隧道、开浏览器 |
+| `scripts/camera/` | `camera_view.ps1` | Windows | 桌面窗口版，或 `-SaveDir` 存盘 |
+| `scripts/camera/` | `prts-camera-web.sh` | 树莓派 | 安装为 `prts-camera-web` 命令，启停相机与网页 |
+| `scripts/camera/` | `inspect_camera.sh` | 树莓派 | 列出 USB / V4L2 / 设备树里的相机信息 |
+| `scripts/mqtt/` | `mqtt_listen.ps1` | Windows | 订阅主题并按行显示 |
+| `scripts/setup/` | `install_commands.ps1` | Windows | 把 `bin` 加入用户 PATH（`prts-cam` 全局可用） |
+| `scripts/setup/` | `provision_pi.sh` | 树莓派 (root) | 安装工具链与依赖、建目录、导出 locale |
+| `bin/` | `prts-cam.cmd` | Windows | 命令行入口：`prts-cam [web\|view\|status\|stop]` |
 
 ## MQTT 遥测
 
 树莓派上跑 mosquitto，节点用 `prts-mqtt` 往 `prts/telemetry` 发 JSON，
-电脑上用 `scripts/mqtt_listen.ps1` 收：
+电脑上用 `scripts/mqtt/mqtt_listen.ps1` 收：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\mqtt_listen.ps1 -Topic 'prts/#' -Count 5
+powershell -ExecutionPolicy Bypass -File scripts\mqtt\mqtt_listen.ps1 -Topic 'prts/#' -Count 5
 ```
 
 ```json
@@ -128,7 +130,7 @@ prts-web
 
 ```powershell
 # 装一次命令（加入用户 PATH），之后任意目录可用
-powershell -ExecutionPolicy Bypass -File scripts\install_commands.ps1
+powershell -ExecutionPolicy Bypass -File scripts\setup\install_commands.ps1
 
 prts-cam            # 浏览器看画面（自动拉起节点侧 + 开隧道）
 prts-cam status     # 节点进程 / 端点 / 本机隧道
@@ -161,12 +163,12 @@ accent = #11AFCF          ; PRTS 青色强调色
 ## 开发工作流
 
 1. 本地编辑源码（工作区即 git 仓库）。
-2. `powershell -File scripts\sync_to_pi.ps1` 同步并编译。
+2. `powershell -File scripts\deploy\sync_to_pi.ps1` 同步并编译。
 3. 重新登录 SSH 验证动画；`prts-boot --check` 只看数据。
 4. 提交并推送（一次完成本地提交 + 两个远端）：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\push_all.ps1 -Message "feat: ..."
+powershell -ExecutionPolicy Bypass -File scripts\deploy\push_all.ps1 -Message "feat: ..."
 ```
 
 也可以手动执行：

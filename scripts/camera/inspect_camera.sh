@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Reports what the kernel currently sees of cameras and video capture devices.
-# Run on the Raspberry Pi: bash scripts/inspect_camera.sh
+# Run on the Raspberry Pi: bash scripts/camera/inspect_camera.sh
 set -uo pipefail
 
 echo "=== USB devices ==="

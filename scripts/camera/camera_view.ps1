@@ -8,10 +8,10 @@
     also how the pipeline is tested without a display.
 
 .EXAMPLE
-    powershell -ExecutionPolicy Bypass -File scripts\camera_view.ps1
+    powershell -ExecutionPolicy Bypass -File scripts\camera\camera_view.ps1
 
 .EXAMPLE
-    powershell -ExecutionPolicy Bypass -File scripts\camera_view.ps1 -SaveDir .\frames -Count 3
+    powershell -ExecutionPolicy Bypass -File scripts\camera\camera_view.ps1 -SaveDir .\frames -Count 3
 #>
 [CmdletBinding()]
 param(
@@ -35,7 +35,11 @@ catch {
 }
 
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
-. (Join-Path $scriptDirectory 'lib\prts_mqtt.ps1')
+$repositoryRoot = $scriptDirectory
+while ($repositoryRoot -and -not (Test-Path -LiteralPath (Join-Path $repositoryRoot 'CMakeLists.txt'))) {
+    $repositoryRoot = Split-Path -Parent $repositoryRoot
+}
+. (Join-Path $repositoryRoot 'scripts\lib\prts_mqtt.ps1')
 
 $address = Resolve-PrstBrokerAddress -Address $Broker -ConfigPath $ConfigPath
 if ([string]::IsNullOrWhiteSpace($address)) {
@@ -154,12 +158,14 @@ $timer.Add_Tick({
     catch {
         $status.Text = 'decode failed: ' + $_.Exception.Message
     }
-})
+}
+)
 
 $form.Add_FormClosed({
     $timer.Stop()
     Close-PrstMqttConnection -Connection $connection
-})
+}
+)
 
 $script:stream = $connection.Stream
 $timer.Start()

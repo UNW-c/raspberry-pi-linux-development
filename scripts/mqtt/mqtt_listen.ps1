@@ -8,10 +8,10 @@
     config/connection.ini and to the prts/# topic tree.
 
 .EXAMPLE
-    powershell -ExecutionPolicy Bypass -File scripts\mqtt_listen.ps1
+    powershell -ExecutionPolicy Bypass -File scripts\mqtt\mqtt_listen.ps1
 
 .EXAMPLE
-    powershell -ExecutionPolicy Bypass -File scripts\mqtt_listen.ps1 -Topic "prts/telemetry" -Count 5
+    powershell -ExecutionPolicy Bypass -File scripts\mqtt\mqtt_listen.ps1 -Topic "prts/telemetry" -Count 5
 #>
 [CmdletBinding()]
 param(
@@ -33,7 +33,11 @@ catch {
 }
 
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
-. (Join-Path $scriptDirectory 'lib\prts_mqtt.ps1')
+$repositoryRoot = $scriptDirectory
+while ($repositoryRoot -and -not (Test-Path -LiteralPath (Join-Path $repositoryRoot 'CMakeLists.txt'))) {
+    $repositoryRoot = Split-Path -Parent $repositoryRoot
+}
+. (Join-Path $repositoryRoot 'scripts\lib\prts_mqtt.ps1')
 
 $address = Resolve-PrstBrokerAddress -Address $Broker -ConfigPath $ConfigPath
 if ([string]::IsNullOrWhiteSpace($address)) {

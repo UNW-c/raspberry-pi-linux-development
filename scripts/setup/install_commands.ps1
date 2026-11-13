@@ -8,10 +8,10 @@
     terminal afterwards; existing windows keep their old PATH.
 
 .EXAMPLE
-    powershell -ExecutionPolicy Bypass -File scripts\install_commands.ps1
+    powershell -ExecutionPolicy Bypass -File scripts\setup\install_commands.ps1
 
 .EXAMPLE
-    powershell -ExecutionPolicy Bypass -File scripts\install_commands.ps1 -Remove
+    powershell -ExecutionPolicy Bypass -File scripts\setup\install_commands.ps1 -Remove
 #>
 [CmdletBinding()]
 param(
@@ -21,7 +21,11 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
-$binDirectory = Join-Path (Split-Path -Parent $scriptDirectory) 'bin'
+$repositoryRoot = $scriptDirectory
+while ($repositoryRoot -and -not (Test-Path -LiteralPath (Join-Path $repositoryRoot 'CMakeLists.txt'))) {
+    $repositoryRoot = Split-Path -Parent $repositoryRoot
+}
+$binDirectory = Join-Path $repositoryRoot 'bin'
 
 if (-not (Test-Path -LiteralPath $binDirectory)) {
     Write-Error "bin directory not found: $binDirectory"
