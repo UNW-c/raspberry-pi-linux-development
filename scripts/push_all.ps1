@@ -53,25 +53,30 @@ $ErrorActionPreference = 'Continue'
 function Invoke-GitPush {
     param(
         [Parameter(Mandatory = $true)][string]$Remote,
-        [string[]]$ExtraArguments = @()
+        [string[]]$GitOptions = @()
     )
 
+    $stdoutFile = [System.IO.Path]::GetTempFileName()
     $stderrFile = [System.IO.Path]::GetTempFileName()
     try {
-        $arguments = @('push', $Remote, 'main') + $ExtraArguments
-        $stdout = & git @arguments 2> $stderrFile
-        $code = $LASTEXITCODE
-        foreach ($line in $stdout) {
-            Write-Host "  $Remote  $line"
+        $arguments = @()
+        $arguments += $GitOptions
+        $arguments += @('push', $Remote, 'main')
+
+        $process = Start-Process -FilePath 'git' -ArgumentList $arguments -Wait -PassThru `
+            -NoNewWindow -RedirectStandardOutput $stdoutFile -RedirectStandardError $stderrFile
+
+        foreach ($file in @($stdoutFile, $stderrFile)) {
+            if (Test-Path -LiteralPath $file) {
+                Get-Content -LiteralPath $file -ErrorAction SilentlyContinue |
+                    Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                    ForEach-Object { Write-Host "  $Remote  $_" -ForegroundColor DarkGray }
+            }
         }
-        if (Test-Path -LiteralPath $stderrFile) {
-            Get-Content -LiteralPath $stderrFile |
-                Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-                ForEach-Object { Write-Host "  $Remote  $_" -ForegroundColor DarkGray }
-        }
-        return $code
+        return $process.ExitCode
     }
     finally {
+        Remove-Item -LiteralPath $stdoutFile -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $stderrFile -Force -ErrorAction SilentlyContinue
     }
 }
@@ -98,7 +103,7 @@ try {
     $previousProxy = $env:HTTPS_PROXY
     $env:HTTPS_PROXY = $proxyUrl
     try {
-        $githubCode = Invoke-GitPush -Remote 'github' -ExtraArguments @('-c', 'http.sslBackend=openssl')
+        $githubCode = Invoke-GitPush -Remote 'github' -GitOptions @('-c', 'http.sslBackend=openssl')
     }
     finally {
         $env:HTTPS_PROXY = $previousProxy
