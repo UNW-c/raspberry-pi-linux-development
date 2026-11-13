@@ -21,14 +21,13 @@
 
 ## 快速开始
 
+连接入口就在工作区内，双击 `scripts\connect_prts.bat` 即可（会自己调大控制台窗口）：
+
 ```powershell
-# 1. 建立连接（双击桌面 PRTS 快捷方式，或直接执行）
+# 1. 建立连接：双击 scripts\connect_prts.bat，或命令行执行
 powershell -ExecutionPolicy Bypass -File scripts\connect_prts.ps1
 
-# 2. 首次使用：创建桌面快捷方式
-powershell -ExecutionPolicy Bypass -File scripts\create_shortcut.ps1
-
-# 3. 把工程同步到树莓派并编译安装
+# 2. 把工程同步到树莓派并编译安装
 powershell -ExecutionPolicy Bypass -File scripts\sync_to_pi.ps1
 ```
 
@@ -72,8 +71,8 @@ prts-boot --version    # 版本
 
 | 脚本 | 运行位置 | 作用 |
 | --- | --- | --- |
-| `scripts/connect_prts.ps1` / `.cmd` | Windows | 解析主机、自动填充密码、打开 SSH 会话，失败时给出诊断且不重试 |
-| `scripts/create_shortcut.ps1` | Windows | 在桌面创建 PRTS 快捷方式 |
+| `scripts/connect_prts.bat` | Windows | 双击即用的连接入口，调用下面的 ps1 并调大控制台窗口 |
+| `scripts/connect_prts.ps1` | Windows | 解析主机、自动填充密码、打开 SSH 会话，失败时给出诊断且不重试 |
 | `scripts/sync_to_pi.ps1` | Windows | 打包 → scp → 远端解包 → 编译 → 安装 |
 | `scripts/push_all.ps1` | Windows | 提交并同时推送 gitee 与 github（自动带上代理） |
 | `scripts/provision_pi.sh` | 树莓派 (root) | 安装工具链与编译依赖、建立目录、导出 locale |

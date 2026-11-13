@@ -50,9 +50,7 @@ if ([string]::IsNullOrWhiteSpace($RemotePath)) {
     $RemotePath = Get-PrstIniValue $values 'project.remote_path' "/home/$user/raspberry-pi-linux-development"
 }
 
-$candidates = @($hostName, $fallbackHost, "$hostName.local") |
-    Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-    Select-Object -Unique
+$candidates = Get-PrstHostCandidates -Primary $hostName -Fallback $fallbackHost
 $endpoint = Resolve-PrstEndpoint -Candidates $candidates -Port $port
 if ($null -eq $endpoint) {
     Write-Host '  PRTS unreachable, nothing synchronised.' -ForegroundColor Red

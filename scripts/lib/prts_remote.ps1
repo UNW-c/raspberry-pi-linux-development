@@ -81,7 +81,6 @@ function Test-PrstRemotePort {
         $client.Close()
     }
 }
-
 # Resolves a host name to an IPv4 address. .NET's DNS client does not perform
 # mDNS, so Resolve-DnsName (which does) is used as the second attempt.
 function Get-PrstIPv4Address {
@@ -112,29 +111,57 @@ function Get-PrstIPv4Address {
     return $null
 }
 
-# Returns the first candidate that accepts a TCP connection on the SSH port.
-# The result carries both the human readable name and the numeric address that
-# ssh should use.
+# Returns the first candidate that answers on the SSH port. DNS/mDNS lookup is
+# separate from the TCP probe: a cold mDNS resolution can take well over a
+# second, so the socket timeout must not be used to bound it.
 function Resolve-PrstEndpoint {
     param(
         [Parameter(Mandatory = $true)][string[]]$Candidates,
         [Parameter(Mandatory = $true)][int]$Port,
-        [int]$TimeoutMs = 1500
+        [int]$TimeoutMs = 3000
     )
 
     foreach ($candidate in $Candidates) {
-        if (Test-PrstRemotePort -HostName $candidate -Port $Port -TimeoutMs $TimeoutMs) {
-            $address = Get-PrstIPv4Address -HostName $candidate
-            if ([string]::IsNullOrWhiteSpace($address)) {
-                $address = $candidate
+        $address = Get-PrstIPv4Address -HostName $candidate
+        if (-not [string]::IsNullOrWhiteSpace($address)) {
+            if (Test-PrstRemotePort -HostName $address -Port $Port -TimeoutMs $TimeoutMs) {
+                return [pscustomobject]@{
+                    Name = $candidate
+                    Address = $address
+                }
             }
+            continue
+        }
+        # Unresolvable name: give the OS one direct attempt before giving up.
+        if (Test-PrstRemotePort -HostName $candidate -Port $Port -TimeoutMs $TimeoutMs) {
             return [pscustomobject]@{
                 Name = $candidate
-                Address = $address
+                Address = $candidate
             }
         }
     }
     return $null
+}
+
+# Builds the candidate list: configured name, fallback name, and the mDNS
+# variant for single label names ("PRTS" -> "PRTS.local").
+function Get-PrstHostCandidates {
+    param(
+        [string]$Primary,
+        [string]$Fallback
+    )
+
+    $candidates = @()
+    foreach ($name in @($Primary, $Fallback)) {
+        if ([string]::IsNullOrWhiteSpace($name)) {
+            continue
+        }
+        $candidates += $name
+        if ($name -notlike '*.*') {
+            $candidates += "$name.local"
+        }
+    }
+    return $candidates | Select-Object -Unique
 }
 
 function Write-PrstLinkPanel {
@@ -204,4 +231,39 @@ function Remove-PrstPasswordEnvironment {
     $env:SSH_ASKPASS = $State.PreviousAskpass
     $env:SSH_ASKPASS_REQUIRE = $State.PreviousRequire
     $env:DISPLAY = $State.PreviousDisplay
+}
+
+# Resizes the console window so the boot sequence has room for the full layout.
+# Only the classic console host can be resized; Windows Terminal and non
+# interactive hosts simply ignore the request.
+function Set-PrstConsoleSize {
+    param(
+        [int]$Columns = 120,
+        [int]$Rows = 38
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($env:WT_SESSION)) {
+        return
+    }
+
+    try {
+        $raw = $Host.UI.RawUI
+        if ($null -eq $raw) {
+            return
+        }
+        $max = $raw.MaxWindowSize
+        $targetColumns = [Math]::Min($Columns, $max.Width)
+        $targetRows = [Math]::Min($Rows, $max.Height)
+
+        $buffer = $raw.BufferSize
+        $bufferWidth = [Math]::Max($buffer.Width, $targetColumns)
+        $bufferHeight = [Math]::Max($buffer.Height, $targetRows)
+        if ($bufferWidth -ne $buffer.Width -or $bufferHeight -ne $buffer.Height) {
+            $raw.BufferSize = New-Object System.Management.Automation.Host.Size($bufferWidth, $bufferHeight)
+        }
+        $raw.WindowSize = New-Object System.Management.Automation.Host.Size($targetColumns, $targetRows)
+    }
+    catch {
+        # Non interactive host or a terminal that owns its own geometry.
+    }
 }

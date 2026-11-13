@@ -48,10 +48,14 @@ $user = Get-PrstIniValue $values 'ssh.user' 'seven'
 $password = Get-PrstIniValue $values 'ssh.password' '123456'
 $port = [int](Get-PrstIniValue $values 'ssh.port' '22')
 $connectTimeout = [int](Get-PrstIniValue $values 'ssh.connect_timeout' '10')
+$windowColumns = [int](Get-PrstIniValue $values 'window.columns' '120')
+$windowRows = [int](Get-PrstIniValue $values 'window.rows' '38')
 
-$candidates = @($hostName, $fallbackHost, "$hostName.local") |
-    Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-    Select-Object -Unique
+if (-not $NoBanner) {
+    Set-PrstConsoleSize -Columns $windowColumns -Rows $windowRows
+}
+
+$candidates = Get-PrstHostCandidates -Primary $hostName -Fallback $fallbackHost
 
 $endpoint = Resolve-PrstEndpoint -Candidates $candidates -Port $port
 
@@ -78,10 +82,10 @@ if ($null -eq $endpoint) {
 
 if (-not $NoBanner) {
     $detail = if ($endpoint.Name -ne $endpoint.Address) {
-        "resolved $($endpoint.Name) -> $($endpoint.Address), password via SSH_ASKPASS"
+        "$($endpoint.Name) -> $($endpoint.Address)"
     }
     else {
-        'password forwarded through SSH_ASKPASS'
+        'password via SSH_ASKPASS'
     }
     Write-PrstLinkPanel -Node "$user@$($endpoint.Address):$port" -State 'HANDSHAKE' -Detail $detail
 }

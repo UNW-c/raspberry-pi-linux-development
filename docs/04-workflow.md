@@ -2,10 +2,17 @@
 
 ## 1. 连接
 
-- 双击桌面 `PRTS` 快捷方式，或执行 `scripts\connect_prts.cmd`
-- 脚本按 `config/connection.ini` 依次探测 `PRTS`、`PRTS.local`、`PRTS.local` 的 22 端口，
-  命中后通过 `SSH_ASKPASS` 把密码交给 ssh，无需手输
+- 在工作区内双击 `scripts\connect_prts.bat`，或执行
+  `powershell -ExecutionPolicy Bypass -File scripts\connect_prts.ps1`
+- 脚本按 `config/connection.ini` 依次尝试 `PRTS.local`、`PRTS` 等候选，先把名字解析成 IP
+  再探测 22 端口（避免冷启动时 mDNS 慢导致误判），命中后通过 `SSH_ASKPASS` 把密码交给 ssh
+- 自动把控制台窗口调整为 120x38（仅经典控制台有效，Windows Terminal 忽略该请求）
 - 只有一次尝试：失败会打印「哪一步失败 + 检查顺序」，不会循环重连
+
+> 历史坑：早期版本用 `start wt.exe ...` 打开 Windows Terminal 再转发命令，若本机的
+> Windows Terminal 应用别名损坏（`%LOCALAPPDATA%\Microsoft\WindowsApps\wt.exe` 变成 0 字节），
+> 每次启动都会弹 `shell:AppsFolder\Microsoft.WindowsTerminal_...!App 无法访问指定设备、路径或文件`。
+> 现在启动链只有 `bat → powershell -File`，不再经过 wt.exe 或 cmd `start`。
 
 排障顺序：
 
@@ -72,6 +79,7 @@ git push github main
 
 | 现象 | 原因 | 处理 |
 | --- | --- | --- |
+| 双击后弹 `shell:AppsFolder\Microsoft.WindowsTerminal_...!App 无法访问指定设备、路径或文件` | 本机 Windows Terminal 应用别名损坏（`wt.exe` 为 0 字节），旧版脚本转发命令时触发 | 启动链已不再使用 wt.exe；如其它工具受影响，可在 Microsoft Store 里修复/重装 Windows Terminal |
 | `git push` 报 `SEC_E_NO_CREDENTIALS` | Windows schannel 在受限环境取不到凭证 | `git config --global http.sslBackend openssl` |
 | GitHub 报 `Connection was reset` | 未走代理，连接被重置 | 启动代理并把 `HTTPS_PROXY` 指向其端口（系统代理当前为 `127.0.0.1:10808`） |
 | `apt-get` 下载只有几十 KB/s | 官方源在境外 | 已切到清华镜像，原文件备份在 `/root/debian.sources.prts-backup` |
