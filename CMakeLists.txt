@@ -26,13 +26,17 @@ add_library(prts_core STATIC
     driver/ansi_terminal.cpp
     driver/steady_clock_driver.cpp
     driver/linux_system_probe.cpp
+    driver/mqtt_codec.cpp
+    driver/tcp_mqtt_client.cpp
     service/config_service.cpp
     service/animation_service.cpp
     service/logo_art.cpp
     service/selfcheck_service.cpp
     service/session_state_service.cpp
     service/boot_sequence_service.cpp
+    service/telemetry_service.cpp
     controller/boot_controller.cpp
+    controller/mqtt_controller.cpp
 )
 
 target_include_directories(prts_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -44,6 +48,10 @@ target_compile_options(prts_core PRIVATE ${PRTS_WARNINGS})
 add_executable(prts-boot app/main.cpp)
 target_link_libraries(prts-boot PRIVATE prts_core)
 target_compile_options(prts-boot PRIVATE ${PRTS_WARNINGS})
+
+add_executable(prts-mqtt app/mqtt_main.cpp)
+target_link_libraries(prts-mqtt PRIVATE prts_core)
+target_compile_options(prts-mqtt PRIVATE ${PRTS_WARNINGS})
 
 # ---------------------------------------------------------------------------
 # Tests
@@ -57,6 +65,7 @@ add_executable(prts_tests
     test/test_config.cpp
     test/test_selfcheck.cpp
     test/test_boot_sequence.cpp
+    test/test_mqtt.cpp
 )
 target_link_libraries(prts_tests PRIVATE prts_core)
 target_compile_options(prts_tests PRIVATE ${PRTS_WARNINGS})
@@ -66,5 +75,5 @@ add_test(NAME prts_unit_tests COMMAND prts_tests)
 # Install
 # ---------------------------------------------------------------------------
 include(GNUInstallDirs)
-install(TARGETS prts-boot RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS prts-boot prts-mqtt RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES config/prts.conf DESTINATION ${CMAKE_INSTALL_DATADIR}/prts)

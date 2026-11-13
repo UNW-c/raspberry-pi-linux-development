@@ -70,8 +70,10 @@ prts-boot              # 播放引导序列（交互式 TTY）
 prts-boot --check      # 只做自检并输出纯文本报告
 prts-boot --force      # 配置或环境变量禁用时仍强制执行
 prts-boot --config F   # 追加一个配置文件
-prts-boot --help       # 帮助
-prts-boot --version    # 版本
+
+prts-mqtt publish      # 采集系统数据并发到 MQTT（prts/telemetry）
+prts-mqtt subscribe    # 订阅主题并把消息打印出来
+prts-mqtt --help       # 帮助
 ```
 
 ## 脚本
@@ -82,8 +84,26 @@ prts-boot --version    # 版本
 | `scripts/connect_prts.ps1` | Windows | 解析主机、自动填充密码、打开 SSH 会话，失败时给出诊断且不重试 |
 | `scripts/sync_to_pi.ps1` | Windows | 打包 → scp → 远端解包 → 编译 → 安装 |
 | `scripts/push_all.ps1` | Windows | 提交并同时推送 gitee 与 github（自动带上代理） |
+| `scripts/mqtt_listen.ps1` | Windows | 订阅 MQTT 主题并在控制台按行显示（无需安装客户端） |
 | `scripts/provision_pi.sh` | 树莓派 (root) | 安装工具链与编译依赖、建立目录、导出 locale |
 | `scripts/deploy.sh` | 树莓派 (seven) | CMake 编译、跑单测、安装二进制、写入登录钩子 |
+| `scripts/inspect_camera.sh` | 树莓派 | 列出 USB / V4L2 / 设备树里与相机相关的信息 |
+
+## MQTT 遥测
+
+树莓派上跑 mosquitto，节点用 `prts-mqtt` 往 `prts/telemetry` 发 JSON，
+电脑上用 `scripts/mqtt_listen.ps1` 收：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\mqtt_listen.ps1 -Topic 'prts/#' -Count 5
+```
+
+```json
+{"ts":"2026-11-13T21:14:59","host":"PRTS","kernel":"6.18.50+rpt-rpi-v8","uptime_s":15504.5,"cpu_temp_c":42.9,"mem_used_pct":17.9,"disk_used_pct":25.8,"load1":0.46}
+```
+
+MQTT 客户端是按 MQTT 3.1.1 手写的（`driver/mqtt_codec` + `driver/tcp_mqtt_client`），
+不依赖 libmosquitto。详见 [MQTT 遥测链路](docs/05-mqtt.md)。
 
 ## 配置
 
