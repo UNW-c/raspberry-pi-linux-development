@@ -55,17 +55,27 @@ PRTS_SKIP_BOOT=1 ssh ...   # 跳过动画
 git add -A
 git commit -m "feat(boot): 调整扫描线速度并补充自检行格式说明"
 git push gitee main
+$env:HTTPS_PROXY = "http://127.0.0.1:10808"   # GitHub 需要代理
 git push github main
 ```
 
 提交信息写清「改了什么 + 完成了什么任务」，一次提交只做一件事。
+
+远端配置：
+
+| 远端 | 地址 | 认证方式 | 备注 |
+| --- | --- | --- | --- |
+| gitee | `git@gitee.com:bababba/raspberry-pi-linux-development.git` | SSH 公钥（已配置） | 直连可用 |
+| github | `https://github.com/UNW-c/raspberry-pi-linux-development` | HTTPS + 凭据管理器 | 需先启动本地代理 |
 
 ## 5. 常见问题
 
 | 现象 | 原因 | 处理 |
 | --- | --- | --- |
 | `git push` 报 `SEC_E_NO_CREDENTIALS` | Windows schannel 在受限环境取不到凭证 | `git config --global http.sslBackend openssl` |
+| GitHub 报 `Connection was reset` | 未走代理，连接被重置 | 启动代理并把 `HTTPS_PROXY` 指向其端口（系统代理当前为 `127.0.0.1:10808`） |
+| `apt-get` 下载只有几十 KB/s | 官方源在境外 | 已切到清华镜像，原文件备份在 `/root/debian.sources.prts-backup` |
 | 登录后没有动画 | 非交互 shell / 未安装二进制 / 已设置 `PRTS_SKIP_BOOT` | 检查 `~/.bashrc` 钩子与 `~/.local/bin/prts-boot` |
 | 中文显示为方块 | 本地终端字体缺中文字形 | Windows Terminal 换用支持中文的等宽字体 |
-| 版式错位 | 终端宽度不足或字体非等宽 | 保持 ≥ 78x30，或用 `-SkipBuild` 前的紧凑版式 |
+| 版式错位 | 终端宽度不足或字体非等宽 | 保持 ≥ 78x30，或用紧凑版式 |
 | 编译 OOM | Pi 3 只有 905 MiB 内存 | `cmake --build build --parallel 2`，或加大交换分区 |

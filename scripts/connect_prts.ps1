@@ -77,8 +77,13 @@ if ($null -eq $endpoint) {
 }
 
 if (-not $NoBanner) {
-    Write-PrstLinkPanel -Node "$user@$($endpoint.Name):$($endpoint.Address):$port" -State 'HANDSHAKE' `
-        -Detail 'password forwarded through SSH_ASKPASS'
+    $detail = if ($endpoint.Name -ne $endpoint.Address) {
+        "resolved $($endpoint.Name) -> $($endpoint.Address), password via SSH_ASKPASS"
+    }
+    else {
+        'password forwarded through SSH_ASKPASS'
+    }
+    Write-PrstLinkPanel -Node "$user@$($endpoint.Address):$port" -State 'HANDSHAKE' -Detail $detail
 }
 
 $passwordState = New-PrstPasswordEnvironment -Password $password
