@@ -81,8 +81,10 @@ if [ "$INSTALL_HOOK" -eq 1 ]; then
         log "installing login hook into $BASHRC"
         {
             printf '\n%s\n' "$HOOK_BEGIN"
-            printf '# Show the PRTS boot sequence on interactive logins only.\n'
-            printf 'if [ -n "$PS1" ] && [ -t 1 ] && [ -z "${PRTS_SKIP_BOOT:-}" ] && [ -x "$HOME/.local/bin/prts-boot" ]; then\n'
+            printf '# Show the PRTS boot sequence once per interactive login.\n'
+            printf 'if [ -n "$PS1" ] && [ -t 1 ] && [ -z "${PRTS_SKIP_BOOT:-}" ] \\\n'
+            printf '   && [ -z "${PRTS_BOOTED:-}" ] && [ -x "$HOME/.local/bin/prts-boot" ]; then\n'
+            printf '    export PRTS_BOOTED=1\n'
             printf '    "$HOME/.local/bin/prts-boot"\n'
             printf 'fi\n'
             printf '%s\n' "$HOOK_END"
