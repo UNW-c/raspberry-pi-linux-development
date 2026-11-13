@@ -49,6 +49,33 @@ else {
 Push-Location $repositoryRoot
 # Git writes progress to stderr; treat those messages as output, not failures.
 $ErrorActionPreference = 'Continue'
+
+function Invoke-GitPush {
+    param(
+        [Parameter(Mandatory = $true)][string]$Remote,
+        [string[]]$ExtraArguments = @()
+    )
+
+    $stderrFile = [System.IO.Path]::GetTempFileName()
+    try {
+        $arguments = @('push', $Remote, 'main') + $ExtraArguments
+        $stdout = & git @arguments 2> $stderrFile
+        $code = $LASTEXITCODE
+        foreach ($line in $stdout) {
+            Write-Host "  $Remote  $line"
+        }
+        if (Test-Path -LiteralPath $stderrFile) {
+            Get-Content -LiteralPath $stderrFile |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                ForEach-Object { Write-Host "  $Remote  $_" -ForegroundColor DarkGray }
+        }
+        return $code
+    }
+    finally {
+        Remove-Item -LiteralPath $stderrFile -Force -ErrorAction SilentlyContinue
+    }
+}
+
 try {
     if (-not $NoCommit) {
         if ([string]::IsNullOrWhiteSpace($Message)) {
@@ -66,14 +93,12 @@ try {
     Write-PrstLinkPanel -Node "HEAD $head" -State 'PUSH' `
         -Detail "gitee ssh, github https via $proxyUrl"
 
-    & git push gitee main 2>&1 | ForEach-Object { Write-Host "  gitee  $_" }
-    $giteeCode = $LASTEXITCODE
+    $giteeCode = Invoke-GitPush -Remote 'gitee'
 
     $previousProxy = $env:HTTPS_PROXY
     $env:HTTPS_PROXY = $proxyUrl
     try {
-        & git -c http.sslBackend=openssl push github main 2>&1 | ForEach-Object { Write-Host "  github $_" }
-        $githubCode = $LASTEXITCODE
+        $githubCode = Invoke-GitPush -Remote 'github' -ExtraArguments @('-c', 'http.sslBackend=openssl')
     }
     finally {
         $env:HTTPS_PROXY = $previousProxy
