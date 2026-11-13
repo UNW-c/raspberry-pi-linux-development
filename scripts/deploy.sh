@@ -65,6 +65,7 @@ log "installing to $INSTALL_BIN_DIR"
 install -d "$INSTALL_BIN_DIR" "$USER_CONFIG_DIR"
 install -m 0755 "$BUILD_DIR/prts-boot" "$INSTALL_BIN_DIR/prts-boot"
 install -m 0755 "$BUILD_DIR/prts-mqtt" "$INSTALL_BIN_DIR/prts-mqtt"
+install -m 0755 "$BUILD_DIR/prts-camera" "$INSTALL_BIN_DIR/prts-camera"
 
 # The configuration schema evolves with the binary. A stale installed copy is
 # backed up and replaced so that an old palette or pacing cannot silently

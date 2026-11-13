@@ -8,6 +8,9 @@ prts_tests
 # Local scratch space used by ad-hoc ssh operations
 .tmp-ops/
 
+# Camera frames saved by scripts/camera_view.ps1 -SaveDir
+frames/
+
 # Editor and OS noise
 .vscode/
 .idea/

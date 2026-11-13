@@ -71,19 +71,58 @@ prts-mqtt --help
 - 无认证、无 TLS；`/etc/mosquitto/conf.d/prts.conf` 里是匿名 + 明文，**只适合内网**
 - 单条载荷过大时需要分片，mosquitto 默认上限 256 MB
 
-## 相机接入（下一步）
+## 相机链路
 
-当前状态：未检测到相机。`lsusb` 只有 root hub、SMSC 网卡与 hub，
-`/dev/video*` 全部是 `bcm2835-codec` / `bcm2835-isp` 的编解码与 ISP 节点，不是采集设备。
+### 设备
 
-接上相机后按顺序确认：
+| 项目 | 值 |
+| --- | --- |
+| 型号 | Microdia Integrated_Webcam_HD（USB `0c45:64ab`） |
+| 驱动 | `uvcvideo`（USB Video Class，免驱） |
+| 节点 | `/dev/video0`（采集）、`/dev/video1`（metadata） |
+| 格式 | MJPG 640×480@30、1280×720@30；YUYV 640×480@15、1280×720@10 |
+| 设备树 | **不需要**，UVC 由内核直接支持 |
+
+`camera_auto_detect=1` 已开启，接 CSI 相机时才会用到 `dtoverlay`。
+
+### 主题
+
+| 主题 | 载荷 | 说明 |
+| --- | --- | --- |
+| `prts/camera/frame` | JPEG 原始字节（二进制） | 每帧一条，默认 640×480，约 16–19 KB |
+| `prts/camera/meta` | JSON | 每 N 帧一条：`{"seq":..,"bytes":..,"format":"MJPG","width":640,"height":480,"ts":".."}` |
+
+默认 10 fps，约 180 KB/s。按需下调 `--fps` 或分辨率。
+
+### 树莓派：推流
 
 ```bash
-lsusb                                              # 是否出现新的 USB 设备
-v4l2-ctl --list-devices                            # 是否出现 uvcvideo 节点
-v4l2-ctl -d /dev/video0 --list-formats-ext         # 支持的分辨率与像素格式
+prts-camera                                  # 默认 /dev/video0 640x480 10fps
+prts-camera --count 100 --fps 5              # 采 100 帧后退出
+prts-camera --width 1280 --height 720 --fps 5
+prts-camera --device /dev/video0 --frame-topic prts/camera/frame
 ```
 
-- USB 相机一般由内核 `uvcvideo` 免驱支持，不需要设备树
-- CSI 排线相机需要 `dtoverlay`（例如 `dtoverlay=imx219`），缺驱动时再补设备树
-- 计划实现：V4L2 采集 MJPEG → 每帧发到 `prts/camera/frame` → PC 端按帧显示
+实现：`driver/v4l2_camera` 用 V4L2 mmap 四缓冲采集 MJPG，`service/camera_service` 负责生命周期与元数据，
+`controller/camera_controller` 负责连接、限速与发布。
+
+### 电脑：查看
+
+```powershell
+# 实时窗口（WinForms，无外部依赖）
+powershell -ExecutionPolicy Bypass -File scripts\camera_view.ps1
+
+# 存盘模式（无窗口，适合验证链路）
+powershell -ExecutionPolicy Bypass -File scripts\camera_view.ps1 -SaveDir .\frames -Count 3
+```
+
+`-SaveDir` 模式在 `-TimeoutSeconds`（默认 15 秒）内收不到帧会退出并报错，不会挂住。
+
+### 已知问题
+
+- 采集到的画面接近全黑（平均亮度 2/255、最大值 5）。链路本身正常：帧是合法的 640×480 JPEG，
+  所以先确认镜头是否被遮挡、是否对着暗处；`v4l2-ctl --list-ctrls` 里 `auto_exposure=3` 为自动曝光。
+- USB 链路偶发 `EPROTO` 并导致设备重新枚举（`dmesg` 可见 `USB disconnect` 后立刻重连）。
+  出现 `VIDIOC_S_FMT: Device or resource busy` 或 `No such device` 时，重新插拔相机即可；
+  若频繁复现，换短一点的线或带供电的 HUB。
+

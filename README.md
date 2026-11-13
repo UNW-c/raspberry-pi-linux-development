@@ -73,6 +73,9 @@ prts-boot --config F   # 追加一个配置文件
 
 prts-mqtt publish      # 采集系统数据并发到 MQTT（prts/telemetry）
 prts-mqtt subscribe    # 订阅主题并把消息打印出来
+
+prts-camera            # V4L2 采集 MJPG 帧并发到 prts/camera/frame
+prts-camera --count 50 --fps 5
 prts-mqtt --help       # 帮助
 ```
 
@@ -85,6 +88,7 @@ prts-mqtt --help       # 帮助
 | `scripts/sync_to_pi.ps1` | Windows | 打包 → scp → 远端解包 → 编译 → 安装 |
 | `scripts/push_all.ps1` | Windows | 提交并同时推送 gitee 与 github（自动带上代理） |
 | `scripts/mqtt_listen.ps1` | Windows | 订阅 MQTT 主题并在控制台按行显示（无需安装客户端） |
+| `scripts/camera_view.ps1` | Windows | 实时显示相机帧，或 `-SaveDir` 存盘 |
 | `scripts/provision_pi.sh` | 树莓派 (root) | 安装工具链与编译依赖、建立目录、导出 locale |
 | `scripts/deploy.sh` | 树莓派 (seven) | CMake 编译、跑单测、安装二进制、写入登录钩子 |
 | `scripts/inspect_camera.sh` | 树莓派 | 列出 USB / V4L2 / 设备树里与相机相关的信息 |
