@@ -32,9 +32,20 @@ prts-camera-web [start|stop|restart|status|logs] [camera options]
   logs      tail /tmp/prts-web.log and /tmp/prts-camera.log
 
 camera options (forwarded to prts-camera):
-  --fps N               publish rate (default 15)
+  --preset NAME         realtime | balanced | sharp
+  --fps N               publish rate (default 30)
+  --scale N             downscale 1, 2 or 4 (default 4 = 160x120)
+  --quality Q           JPEG quality 1-100 (default 50)
   --width N --height N  capture size the device supports (640x480 or 1280x720)
   --meta-every N        metadata cadence (default 30)
+
+presets, measured end-to-end through the ssh forward on this node:
+  realtime   160x120   2.2 KiB   30 fps   ~34 ms median   (default)
+  balanced   320x240   5.4 KiB   20 fps   ~55 ms median
+  sharp      640x480    52 KiB   15 fps   saturates the link, not usable
+
+  keep the stream under ~100 KiB/s: the link to the desktop carries about
+  230 KiB/s, and filling it only shows up as jitter in the picture.
 USAGE
 }
 

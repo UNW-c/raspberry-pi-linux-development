@@ -89,46 +89,78 @@ prts-mqtt --help
 
 | 主题 | 载荷 | 说明 |
 | --- | --- | --- |
-| `prts/camera/frame` | JPEG 原始字节（二进制） | 每帧一条，默认 640×480，约 16–19 KB |
-| `prts/camera/meta` | JSON | 每 N 帧一条：`{"seq":..,"bytes":..,"format":"MJPG","width":640,"height":480,"ts":".."}` |
+| `prts/camera/frame` | JPEG 原始字节（二进制） | 每帧一条，默认 160×120，约 2.2 KB |
+| `prts/camera/meta` | JSON | 每 N 帧一条：`{"seq":..,"bytes":..,"format":"MJPG","width":160,"height":120,"drained":0,"ts":".."}` |
+| `prts/camera/stamp` | 毫秒时间戳 | 每帧前一条，用于端到端延迟测量 |
 
-默认 10 fps，约 180 KB/s。按需下调 `--fps` 或分辨率。
+`drained` 是这一帧之前被丢掉的旧帧数：采集按传感器自己的 30 fps 跑，发布慢于它时
+把积压的旧帧扔掉而不是排队，见下面「实时性」。
+
+默认 `--preset realtime`：160×120、30 fps、约 64 KB/s。
 
 ### 树莓派：推流
 
 ```bash
-prts-camera                                  # 默认 /dev/video0 640x480 10fps
-prts-camera --count 100 --fps 5              # 采 100 帧后退出
+prts-camera                          # 默认 realtime：160x120 30fps
+prts-camera --preset balanced        # 320x240 20fps
+prts-camera --preset sharp           # 640x480 15fps（WiFi 上会拖）
+prts-camera --count 100 --fps 5      # 采 100 帧后退出
 prts-camera --width 1280 --height 720 --fps 5
-prts-camera --device /dev/video0 --frame-topic prts/camera/frame
 ```
 
-实现：`driver/v4l2_camera` 用 V4L2 mmap 四缓冲采集 MJPG，`service/camera_service` 负责生命周期与元数据，
+实现：`driver/v4l2_camera` 用 V4L2 mmap 四缓冲采集 MJPG（每次只交最新的一帧），
+`driver/jpeg_codec` 用 libjpeg DCT 缩放重编码，`service/camera_service` 负责生命周期与元数据，
 `controller/camera_controller` 负责连接、限速与发布。
 
 ### 实时性
 
-实测这条链路（树莓派 WiFi → 电脑）只有约 **320 KiB/s**。原始 640×480 MJPG 每帧约 65 KB，
-10 fps 需要 650 KB/s，链路被瞬间打满，TCP 发送缓冲越堆越多，画面就会越拖越远。
+延迟由四段决定，每一段都量过，不靠感觉：
 
-现在改成在树莓派上重编码后再发：
-
-| 项目 | 之前 | 现在 |
+| 环节 | 实测 | 手段 |
 | --- | --- | --- |
-| 分辨率 | 640×480 | 320×240（`--scale 2`，libjpeg DCT 缩放） |
-| 单帧 | ~65 KB | ~10 KB |
-| 默认帧率 | 10 fps | 15 fps |
-| 带宽 | ~650 KB/s（超载） | ~150 KB/s（链路一半） |
-| 服务端延迟 | 数秒（积压） | 1–2 ms |
-| 经隧道实测 | ~4 fps、大量丢弃 | 17 fps、0 丢弃 |
+| 传感器 → 采集完成 | ≤ 33 ms | 每次只取最新帧，积压的旧帧丢掉 |
+| 重编码（640×480 → 160×120） | ~3 ms | libjpeg DCT 缩放 + 重编码 |
+| 相机 → `prts-web`（本机 MQTT） | 1–2 ms | `/status` 的 `latency_ms` |
+| `prts-web` → 电脑浏览器（SSH 转发） | 30–100 ms | 取决于帧大小与 WiFi 抖动 |
 
-`prts-web` 的 `/status` 里有两个关键字段：
+链路实测（树莓派 WiFi → 电脑，scp 20 MB）只有约 **230–320 KiB/s**。决定延迟的不是
+`fps`，而是**单帧字节数**：一帧要全部到齐才能显示，所以 6.5 KB 的帧光传输就占
+~28 ms，2.2 KB 只要 ~9 ms。链路被填满时不会变清楚，只会抖动变大。
 
-- `latency_ms`：从相机打时间戳到网页服务收到帧的时间（`prts/camera/stamp` 主题）
-- `dropped`：慢客户端被丢弃的帧数
+端到端实测（`scripts/camera/measure_latency.ps1`，经 `127.0.0.1:18080`，每档 10 秒）：
 
-写入浏览器时采用「最新帧优先」：某个客户端来不及时，服务端直接丢掉旧帧换新帧，
-所以慢连接不会累积延迟，只会掉帧。
+| 配置 | 单帧 | 带宽 | 中位数 | p95 |
+| --- | --- | --- | --- | --- |
+| 160×120 q50 30 fps（默认） | 2.2 KB | 64 KiB/s | **22–45 ms** | 75–105 ms |
+| 320×240 q55 20 fps | 5.4 KB | 106 KiB/s | 55 ms | 140 ms |
+| 320×240 q45 30 fps | 4.8 KB | 143 KiB/s | 55 ms | 229 ms |
+| 320×240 q70 15 fps（旧默认） | 6.5 KB | 99 KiB/s | 51–58 ms | ~100 ms |
+| 640×480 q70 15 fps | 52 KB | 780 KiB/s | 链路打满，不可用 | — |
+
+同一时间窗里跑三次，中位数会在 22 / 34 / 53 ms 之间跳：WiFi 抖动就是这条链路
+的主要不确定性，p95 比中位数更能反映体感。页面自己算的分布（不经 PowerShell）
+是中位数 31 ms、p95 79 ms。
+
+上面量的是「采集完成 → 屏幕」；真正的玻璃到玻璃还要加上**曝光时间**
+（`exposure_time_absolute` 当前 156 → 15.6 ms，暗处自动曝光会到 60 ms 以上），
+所以实际约 45 ms。
+
+结论：把带宽压到 100 KiB/s 以下，延迟就基本只剩「等下一帧」的那半个帧间隔；
+再加带宽只会换来抖动。
+
+> **坑：树莓派没有 RTC**，`date` 和电脑差 3.5 秒（靠 NTP 校准，冷启动后偏差更大）。
+> 直接用 `电脑时间 - 树莓派时间戳` 会得到稳定的 3.5 s「延迟」，看着像链路积压，
+> 实际是时钟差。`measure_latency.ps1` 用 `/status` 的 `server_ms` 先算时钟差再减掉，
+> 网页端也是同样做法（`clockOffset`）。
+
+三层「丢旧保新」，慢的地方不会累积延迟：
+
+1. 采集：`VIDIOC_DQBUF` 之后继续把已完成的旧帧取出来扔掉（`drained` 计数）
+2. 转发：`prts-web` 每个客户端只保留最新一帧，写不完就整帧替换
+3. 浏览器：解码没跟上就丢掉这一帧（页面上的 `SKIP`），不排队
+
+另外 `/stream` 的 socket 设了 `TCP_NODELAY` 和 16 KiB 发送缓冲，避免内核把好几帧
+攒在队列里。
 
 > 相机本身只支持 640×480 和 1280×720（MJPG / YUYV），没有更低的分辨率可选，
 > 所以缩小是在树莓派上做的（需要 `libjpeg62-turbo-dev`，`provision_pi.sh` 已包含）。
@@ -136,9 +168,17 @@ prts-camera --device /dev/video0 --frame-topic prts/camera/frame
 调整方式：
 
 ```bash
-prts-camera-web restart --fps 20                # 更流畅，带宽约 200 KB/s
-prts-camera-web restart --scale 4 --quality 60  # 160x120，约 4 KB/帧
-prts-camera-web restart --scale 1               # 关闭缩放（回到 640x480）
+prts-camera-web restart --preset realtime    # 默认：160x120 30fps
+prts-camera-web restart --preset balanced    # 320x240 20fps
+prts-camera-web restart --preset sharp       # 640x480 15fps
+prts-camera-web restart --scale 2 --quality 45 --fps 25   # 也可以自己组合
+```
+
+改完立刻量一次，别猜：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\camera\measure_latency.ps1
+powershell -ExecutionPolicy Bypass -File scripts\camera\measure_latency.ps1 -Seconds 20
 ```
 
 ### 电脑：查看
@@ -184,15 +224,21 @@ ssh -L 127.0.0.1:18080:127.0.0.1:8080 seven@PRTS.local
 # 浏览器打开 http://127.0.0.1:18080/
 ```
 
-页面自带状态行（帧序号、帧率、分辨率、流量、观看人数、MQTT 状态），
+页面自带状态行：帧序号、帧率、分辨率、已绘制帧数、**端到端延迟**、浏览器丢帧数、
+累计流量、观看人数、MQTT 状态。页面不用 `<img src="/stream">`，而是用 Stream API
+自己解析 multipart：这样每帧都能和它的采集时间戳对比，算出的延迟是真实的
+「传感器 → 屏幕」，解码跟不上时也能主动丢帧。
+
 路由如下：
 
 | 路由 | 内容 |
 | --- | --- |
 | `/` | 网页（纯内联 CSS/JS，不依赖任何 CDN） |
-| `/stream` | `multipart/x-mixed-replace` MJPEG 实时流 |
+| `/stream` | `multipart/x-mixed-replace` MJPEG，每帧带 `X-Stamp: <毫秒>` |
 | `/snapshot` | 最近一帧 JPEG |
-| `/status` | `{"frames":..,"fps":..,"width":640,"height":480,"clients":..,"mqtt":"up"}` |
+| `/status` | `{"frames":..,"fps":..,"width":160,"height":120,"clients":..,"latency_ms":..,"dropped":..,"last_bytes":..,"stamp":..,"server_ms":..,"mqtt":"up"}` |
+
+`server_ms` 是节点当前时间，浏览器用它换算时钟差；`stamp` 是最新一帧的采集时间。
 
 **内网穿透场景**：`prts-web` 默认只监听 `127.0.0.1`，所以不需要在路由器或 frp 上额外开端口；
 浏览器访问的是本机 `18080`，流量走已有的 SSH 连接（`ssh -L` 转发），
@@ -212,8 +258,13 @@ powershell -ExecutionPolicy Bypass -File scripts\camera\camera_view.ps1 -SaveDir
 
 ### 带宽参考
 
-640×480 MJPG 单帧约 74 KB，10 fps ≈ 740 KB/s；远程链路吃紧时用 `prts-camera --fps 5`
-或 `--width 320 --height 240` 降档。
+| 配置 | 单帧 | 30 fps 带宽 | 20 fps 带宽 |
+| --- | --- | --- | --- |
+| 160×120 q50 | 2.2 KB | 64 KiB/s | 43 KiB/s |
+| 320×240 q55 | 5.4 KB | 158 KiB/s | 106 KiB/s |
+| 640×480 q70 | 52 KB | 1.5 MiB/s | 1 MiB/s |
+
+链路约 230–320 KiB/s，**留一半余量**。超了不会变清楚，只会让画面开始拖。
 
 ### 已知问题
 

@@ -3,6 +3,7 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -29,6 +30,9 @@ void handleStopSignal(int) { g_running = 0; }
 constexpr int kMaxStreamClients = 16;
 constexpr int kRequestTimeoutMs = 300;
 constexpr const char* kBoundary = "prtsframe";
+// Roughly five frames of send queue: enough to keep a wifi link busy, small
+// enough that a stalled reader cannot fall seconds behind the camera.
+constexpr int kStreamSendBuffer = 16 * 1024;
 
 std::int64_t nowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -79,11 +83,15 @@ std::string streamHeaders() {
     return headers;
 }
 
-std::string frameChunk(const std::string& jpeg) {
+std::string frameChunk(const std::string& jpeg, std::int64_t stamp) {
     std::string chunk = "--";
     chunk += kBoundary;
     chunk += "\r\nContent-Type: image/jpeg\r\nContent-Length: ";
     chunk += std::to_string(jpeg.size());
+    // The capture time travels with the picture, so any client can tell how old
+    // what it is looking at actually is.
+    chunk += "\r\nX-Stamp: ";
+    chunk += std::to_string(stamp);
     chunk += "\r\n\r\n";
     chunk += jpeg;
     chunk += "\r\n";
@@ -159,7 +167,7 @@ const char* CameraWebService::pageHtml() {
   .name { font-weight: 700; letter-spacing: .12em; }
   .tag { margin-left: auto; color: #8a8a8a; letter-spacing: .18em; font-size: 11px; }
   .rule { height: 1px; background: #2e2e2e; margin: 10px 0 14px; }
-  .frame { display: block; width: 100%; max-width: 640px; border: 1px solid #2e2e2e; background: #0a0a0a; }
+  .frame { display: block; width: 100%; max-width: 480px; border: 1px solid #2e2e2e; background: #0a0a0a; image-rendering: pixelated; }
   footer { display: flex; gap: 18px; flex-wrap: wrap; color: #8a8a8a; margin-top: 12px; }
   footer b { color: #bfbfbf; font-weight: 400; }
   .warn { color: #c9a227; }
@@ -172,38 +180,176 @@ const char* CameraWebService::pageHtml() {
   <span class="tag">CAMERA</span>
 </header>
 <div class="rule"></div>
-<img class="frame" src="/stream" alt="camera stream">
+<canvas class="frame" id="frame" width="320" height="240"></canvas>
 <div class="rule"></div>
 <footer>
   <span>FRAME <b id="frames">0</b></span>
   <span>FPS <b id="fps">0</b></span>
   <span>SIZE <b id="size">-</b></span>
+  <span>DRAWN <b id="drawn">0</b></span>
+  <span>LATENCY <b id="latency">-</b></span>
+  <span>SKIP <b id="skipped">0</b></span>
   <span>BYTES <b id="bytes">0</b></span>
   <span>VIEWERS <b id="clients">0</b></span>
-  <span>LATENCY <b id="latency">-</b></span>
   <span>MQTT <b id="mqtt">-</b></span>
   <span id="note" class="warn"></span>
 </footer>
 <script>
+// Frames are read with the Stream API instead of <img src="/stream"> so the page
+// can time every picture against its capture stamp and drop frames it is too
+// busy to decode. That is what keeps the view live instead of falling behind.
+const canvas = document.getElementById('frame');
+const ctx = canvas.getContext('2d', { alpha: false });
+const decoder = new TextDecoder();
+const boundary = new TextEncoder().encode('--prtsframe');
+const headersEnd = new TextEncoder().encode('\r\n\r\n');
+let clockOffset = 0;
+let drawn = 0;
+let skipped = 0;
+let pending = new Uint8Array(0);
+let decoding = false;
+let fallback = null;
+
+function find(haystack, needle, from) {
+  outer:
+  for (let i = from; i <= haystack.length - needle.length; i++) {
+    for (let j = 0; j < needle.length; j++) {
+      if (haystack[i + j] !== needle[j]) continue outer;
+    }
+    return i;
+  }
+  return -1;
+}
+
+async function alignClocks() {
+  try {
+    const started = Date.now();
+    const status = await (await fetch('/status', { cache: 'no-store' })).json();
+    clockOffset = status.server_ms - (started + Date.now()) / 2;
+  } catch (error) {
+    // Keep the previous offset: it is only used for the latency readout.
+  }
+}
+
+function show(bitmap, stamp) {
+  if (canvas.width !== bitmap.width) {
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+  }
+  ctx.drawImage(bitmap, 0, 0);
+  bitmap.close();
+  document.getElementById('drawn').textContent = ++drawn;
+  if (stamp > 0) {
+    const age = Date.now() + clockOffset - stamp;
+    if (age >= 0 && age < 60000) {
+      document.getElementById('latency').textContent = age + ' ms';
+    }
+  }
+}
+
+function offer(jpeg, stamp) {
+  if (decoding) {
+    document.getElementById('skipped').textContent = ++skipped;
+    return;
+  }
+  decoding = true;
+  createImageBitmap(new Blob([jpeg], { type: 'image/jpeg' }))
+    .then((bitmap) => { decoding = false; show(bitmap, stamp); })
+    .catch(() => { decoding = false; });
+}
+
+function drain() {
+  for (;;) {
+    const start = find(pending, boundary, 0);
+    if (start < 0) {
+      break;
+    }
+    const split = find(pending, headersEnd, start);
+    if (split < 0) {
+      break;
+    }
+    const head = decoder.decode(pending.subarray(start, split));
+    const length = /content-length:\s*(\d+)/i.exec(head);
+    if (length === null) {
+      pending = pending.subarray(split + 4);
+      continue;
+    }
+    const body = split + 4;
+    const size = Number(length[1]);
+    if (pending.length < body + size) {
+      break;
+    }
+    const stamp = /x-stamp:\s*(\d+)/i.exec(head);
+    offer(pending.slice(body, body + size), stamp === null ? 0 : Number(stamp[1]));
+    pending = pending.subarray(body + size);
+  }
+  if (pending.length > 1048576) {
+    pending = new Uint8Array(0);
+  }
+}
+
+async function live() {
+  if (typeof createImageBitmap !== 'function') {
+    throw new Error('image decoding unsupported');
+  }
+  const response = await fetch('/stream', { cache: 'no-store' });
+  if (!response.body) {
+    throw new Error('streaming unsupported');
+  }
+  const reader = response.body.getReader();
+  for (;;) {
+    const chunk = await reader.read();
+    if (chunk.done) {
+      return;
+    }
+    const merged = new Uint8Array(pending.length + chunk.value.length);
+    merged.set(pending);
+    merged.set(chunk.value, pending.length);
+    pending = merged;
+    drain();
+  }
+}
+
+async function streamLoop() {
+  for (;;) {
+    try {
+      document.getElementById('note').textContent = '';
+      await live();
+    } catch (error) {
+      if (fallback === null) {
+        // Browser without readablestream support: plain MJPEG image, no timing.
+        fallback = document.createElement('img');
+        fallback.className = 'frame';
+        fallback.src = '/stream';
+        canvas.replaceWith(fallback);
+      }
+      document.getElementById('note').textContent = 'stream interrupted, retrying';
+    }
+    pending = new Uint8Array(0);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+}
+
 async function refresh() {
   try {
-    const response = await fetch('/status', { cache: 'no-store' });
-    const status = await response.json();
+    const status = await (await fetch('/status', { cache: 'no-store' })).json();
     document.getElementById('frames').textContent = status.frames;
     document.getElementById('fps').textContent = status.fps;
     document.getElementById('size').textContent = status.width + 'x' + status.height;
     document.getElementById('bytes').textContent = status.bytes;
     document.getElementById('clients').textContent = status.clients;
-    document.getElementById('latency').textContent =
-      status.latency_ms >= 0 ? status.latency_ms + ' ms' : '-';
     document.getElementById('mqtt').textContent = status.mqtt;
     document.getElementById('note').textContent = status.width ? '' : 'waiting for the first frame';
   } catch (error) {
     document.getElementById('mqtt').textContent = 'lost';
   }
 }
+
+alignClocks();
+streamLoop();
 refresh();
 setInterval(refresh, 1000);
+setInterval(alignClocks, 30000);
 </script>
 </body>
 </html>
@@ -338,7 +484,8 @@ int CameraWebService::run(const Options& options) {
 
         // Newest frame wins: replace whatever a slow viewer still has queued.
         if (gotFrame) {
-            const std::string chunk = frameChunk(latestFrame);
+            const std::string chunk =
+                frameChunk(latestFrame, lastStamp > 0 ? lastStamp : epochMs());
             for (Viewer& viewer : viewers) {
                 if (!viewer.pending.empty() || viewer.sent < viewer.pending.size()) {
                     ++viewer.dropped;
@@ -426,6 +573,13 @@ int CameraWebService::run(const Options& options) {
                 ::close(client);
             } else if (request.path == "/stream") {
                 if (sendAll(client, streamHeaders())) {
+                    // The stream is a live feed, not a file: no Nagle batching,
+                    // and a shallow send queue so the newest frame is not stuck
+                    // behind a pile of older ones when a tunnel is in between.
+                    int nodelay = 1;
+                    ::setsockopt(client, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
+                    int sendBuffer = kStreamSendBuffer;
+                    ::setsockopt(client, SOL_SOCKET, SO_SNDBUF, &sendBuffer, sizeof(sendBuffer));
                     const int flags = ::fcntl(client, F_GETFL, 0);
                     ::fcntl(client, F_SETFL, flags | O_NONBLOCK);
                     Viewer viewer;
@@ -458,6 +612,10 @@ int CameraWebService::run(const Options& options) {
                 body += ",\"dropped\":" + std::to_string(dropped);
                 body += ",\"mqtt\":\"" + std::string(mqttReady ? "up" : "down") + "\"";
                 body += ",\"last_bytes\":" + std::to_string(latestFrame.size());
+                body += ",\"stamp\":" + std::to_string(lastStamp);
+                // Lets a browser convert its own clock into the node's clock and
+                // show the real age of the picture it is displaying.
+                body += ",\"server_ms\":" + std::to_string(epochMs());
                 body += "}";
                 sendAll(client, httpResponse("200 OK", "application/json", body, !headOnly));
                 ::close(client);

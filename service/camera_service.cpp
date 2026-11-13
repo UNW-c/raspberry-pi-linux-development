@@ -34,6 +34,7 @@ std::string CameraService::metaJson(const model::CameraFrame& frame, const std::
     payload += "\"format\":\"" + frame.format + "\",";
     payload += "\"width\":" + std::to_string(frame.width) + ",";
     payload += "\"height\":" + std::to_string(frame.height) + ",";
+    payload += "\"drained\":" + std::to_string(frame.drained) + ",";
     payload += "\"ts\":\"" + timestamp + "\"";
     payload += "}";
     return payload;

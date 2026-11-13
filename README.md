@@ -95,6 +95,7 @@ prts-mqtt --help       # 帮助
 | `scripts/camera/` | `camera_web.bat` / `.ps1` | Windows | 双击即看：拉起节点侧、开隧道、开浏览器 |
 | `scripts/camera/` | `camera_view.ps1` | Windows | 桌面窗口版，或 `-SaveDir` 存盘 |
 | `scripts/camera/` | `prts-camera-web.sh` | 树莓派 | 安装为 `prts-camera-web` 命令，启停相机与网页 |
+| `scripts/camera/` | `measure_latency.ps1` | Windows | 量端到端帧年龄（经隧道，含时钟校准） |
 | `scripts/camera/` | `inspect_camera.sh` | 树莓派 | 列出 USB / V4L2 / 设备树里的相机信息 |
 | `scripts/mqtt/` | `mqtt_listen.ps1` | Windows | 订阅主题并按行显示 |
 | `scripts/setup/` | `install_commands.ps1` | Windows | 把 `bin` 加入用户 PATH（`prts-cam` 全局可用） |
@@ -120,9 +121,18 @@ MQTT 客户端是按 MQTT 3.1.1 手写的（`driver/mqtt_codec` + `driver/tcp_mq
 ## 相机
 
 树莓派上插的 USB 相机（UVC，免驱）由 `prts-camera` 采集成 MJPEG 帧发到 MQTT，
-`prts-web` 再把帧转成网页的 MJPEG 流。相机只支持 640×480 / 1280×720，而 WiFi 只有
-约 320 KiB/s，所以默认在树莓派上把帧重编码到 320×240（约 10 KB/帧，15 fps），
-否则链路会被打满、画面延迟累积。
+`prts-web` 再把帧转成网页的 MJPEG 流。
+
+相机只支持 640×480 / 1280×720，而 WiFi 只有约 230–320 KiB/s。决定延迟的是**单帧字节数**：
+一帧必须全部到齐才能显示，所以默认在树莓派上重编码到 160×120（约 2.2 KB，30 fps，
+共约 64 KiB/s），端到端延迟中位数 **约 30–45 ms**（含 15 ms 曝光）。要更清楚的画面就换 preset，
+代价是延迟变大（实测见 [docs/05-mqtt.md](docs/05-mqtt.md)）：
+
+```bash
+prts-camera-web restart --preset realtime   # 默认 160x120 30fps，~34 ms
+prts-camera-web restart --preset balanced   # 320x240 20fps，~55 ms
+prts-camera-web restart --preset sharp      # 640x480 15fps，链路打满
+```
 
 ```bash
 # 树莓派
@@ -138,6 +148,15 @@ prts-cam            # 浏览器看画面（自动拉起节点侧 + 开隧道）
 prts-cam status     # 节点进程 / 端点 / 本机隧道
 prts-cam stop       # 停掉
 # 浏览器地址：http://127.0.0.1:18080/
+```
+
+页面底部会显示 `LATENCY`：浏览器自己按帧上的采集时间戳算出的真实端到端延迟
+（树莓派没有 RTC，页面会先用 `/status` 的 `server_ms` 校准时钟差）。
+
+想单独量一遍：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\camera\measure_latency.ps1
 ```
 
 因为网页服务只监听节点的 `127.0.0.1`、通过 SSH 本地转发访问，

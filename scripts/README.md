@@ -21,6 +21,7 @@ scripts/
 │   ├── camera_web.bat      双击入口
 │   ├── prts_cam.ps1        Windows 命令行分发（web/view/status/stop）
 │   ├── camera_view.ps1     桌面窗口 / 存盘
+│   ├── measure_latency.ps1 Windows：量端到端帧年龄（经隧道，先校准节点时钟）
 │   └── inspect_camera.sh   树莓派：相机诊断
 ├── mqtt/                MQTT 工具
 │   └── mqtt_listen.ps1  订阅并按行显示
@@ -39,4 +40,6 @@ scripts/
 | 提交并推送 | `powershell -File scripts\deploy\push_all.ps1 -Message "..."` |
 | 看相机网页（PC） | 双击根目录 `camera_web.bat`，或 `prts-cam` |
 | 起/停相机（树莓派） | `prts-camera-web start` / `stop` / `status` |
+| 换画质档位（树莓派） | `prts-camera-web restart --preset balanced` |
+| 量端到端延迟（PC） | `powershell -File scripts\camera\measure_latency.ps1` |
 | 装命令到 PATH | `powershell -File scripts\setup\install_commands.ps1` |

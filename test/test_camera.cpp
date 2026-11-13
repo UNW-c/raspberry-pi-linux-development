@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 
+#include "controller/camera_controller.h"
 #include "driver/i_camera_source.h"
 #include "model/camera.h"
 #include "service/camera_service.h"
@@ -89,11 +90,35 @@ PRTS_TEST(camera_meta_json_describes_the_frame) {
     PRTS_CHECK(json.find("\"width\":640") != std::string::npos);
     PRTS_CHECK(json.find("\"height\":480") != std::string::npos);
     PRTS_CHECK(json.find("\"format\":\"MJPG\"") != std::string::npos);
+    PRTS_CHECK(json.find("\"drained\":0") != std::string::npos);
     PRTS_CHECK(json.find("\"ts\":\"2026-11-13T21:20:00\"") != std::string::npos);
 }
 
-PRTS_TEST(camera_service_reports_open_failure) {
-    class BrokenCamera : public prts::driver::ICameraSource {
+PRTS_TEST(camera_presets_choose_a_latency_point) {
+    std::string error;
+
+    const char* realtime[] = {"prts-camera", "--preset", "realtime"};
+    const auto fast = prts::controller::CameraController::parse(3, realtime, error);
+    PRTS_CHECK(error.empty());
+    PRTS_CHECK_EQ(fast.scale, 4);
+    PRTS_CHECK_EQ(fast.quality, 50);
+    PRTS_CHECK_EQ(fast.fps, 30);
+
+    // An explicit flag after the preset still wins: the preset is a starting
+    // point, not a lock.
+    const char* tuned[] = {"prts-camera", "--preset", "balanced", "--fps", "10"};
+    const auto mixed = prts::controller::CameraController::parse(5, tuned, error);
+    PRTS_CHECK(error.empty());
+    PRTS_CHECK_EQ(mixed.scale, 2);
+    PRTS_CHECK_EQ(mixed.quality, 55);
+    PRTS_CHECK_EQ(mixed.fps, 10);
+
+    const char* unknown[] = {"prts-camera", "--preset", "cinema"};
+    prts::controller::CameraController::parse(3, unknown, error);
+    PRTS_CHECK(!error.empty());
+}
+
+PRTS_TEST(camera_service_reports_open_failure) {    class BrokenCamera : public prts::driver::ICameraSource {
     public:
         bool open(const prts::model::CameraConfig&, std::string& error) override {
             error = "open /dev/video9: No such file or directory";

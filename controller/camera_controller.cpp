@@ -35,9 +35,11 @@ void CameraController::printHelp() {
         "  --device PATH      V4L2 device (default /dev/video0)\n"
         "  --width N          capture width (default 640)\n"
         "  --height N         capture height (default 480)\n"
-        "  --fps N            publish rate (default 15)\n"
-        "  --scale N          downscale factor before publishing: 1, 2, 4 (default 2 = 320x240)\n"
-        "  --quality Q        JPEG quality after rescaling, 1-100 (default 70)\n"
+        "  --fps N            publish rate (default 30, the camera's own maximum)\n"
+        "  --scale N          downscale factor before publishing: 1, 2, 4 (default 4 = 160x120)\n"
+        "  --quality Q        JPEG quality after rescaling, 1-100 (default 50)\n"
+        "  --preset NAME      realtime (160x120 @30), balanced (320x240 @20) or\n"
+        "                     sharp (640x480 @15); explicit flags after it still win\n"
         "  --frame-topic T    topic carrying the JPEG bytes (default prts/camera/frame)\n"
         "  --meta-topic T     topic carrying frame metadata (default prts/camera/meta)\n"
         "  --stamp-topic T    topic carrying the capture timestamp, used for latency (default prts/camera/stamp)\n"
@@ -72,6 +74,7 @@ CameraController::Options CameraController::parse(int argc, const char* const ar
         } else if (argument == "--host" || argument == "--port" || argument == "--device" ||
                    argument == "--width" || argument == "--height" || argument == "--fps" ||
                    argument == "--scale" || argument == "--quality" ||
+                   argument == "--preset" ||
                    argument == "--frame-topic" || argument == "--meta-topic" ||
                    argument == "--stamp-topic" || argument == "--meta-every" ||
                    argument == "--count" || argument == "--client-id") {
@@ -96,6 +99,25 @@ CameraController::Options CameraController::parse(int argc, const char* const ar
                 options.scale = std::atoi(value.c_str());
             } else if (argument == "--quality") {
                 options.quality = std::atoi(value.c_str());
+            } else if (argument == "--preset") {
+                // Small frames are what keeps the stream live: a pair of
+                // presets saves remembering the measured combinations.
+                if (value == "realtime") {
+                    options.scale = 4;
+                    options.quality = 50;
+                    options.fps = 30;
+                } else if (value == "balanced") {
+                    options.scale = 2;
+                    options.quality = 55;
+                    options.fps = 20;
+                } else if (value == "sharp") {
+                    options.scale = 1;
+                    options.quality = 70;
+                    options.fps = 15;
+                } else {
+                    error = "unknown preset: " + value;
+                    return options;
+                }
             } else if (argument == "--frame-topic") {
                 options.frameTopic = value;
             } else if (argument == "--meta-topic") {

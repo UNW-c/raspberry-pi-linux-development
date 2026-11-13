@@ -25,9 +25,9 @@ public:
         std::string device{"/dev/video0"};
         int width{640};
         int height{480};
-        int fps{15};
-        int scale{2};      // 1 = full size, 2 = half, 4 = quarter
-        int quality{70};
+        int fps{30};
+        int scale{4};      // 1 = full size, 2 = half, 4 = quarter
+        int quality{50};
         int maxFrames{0};
         int metaEvery{30};
         bool showHelp{false};

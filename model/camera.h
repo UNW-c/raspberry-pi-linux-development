@@ -24,6 +24,9 @@ struct CameraFrame {
     int width{0};
     int height{0};
     std::string format{"MJPG"};
+    // Completed frames thrown away in favour of a newer one, so a slow reader
+    // never replays old pictures.
+    int drained{0};
 };
 
 }  // namespace prts::model

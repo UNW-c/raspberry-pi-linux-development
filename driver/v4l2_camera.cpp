@@ -17,6 +17,9 @@ namespace prts::driver {
 namespace {
 
 constexpr int kBufferCount = 4;
+// Upper bound on how many stale frames one grab may skip, so a misbehaving
+// driver cannot keep the loop busy forever.
+constexpr int kMaxDrain = 8;
 
 int xioctl(int descriptor, unsigned long request, void* argument) {
     int result = 0;
@@ -184,6 +187,34 @@ bool V4l2Camera::grab(model::CameraFrame& frame, int timeoutMs, std::string& err
     const std::size_t used = std::min<std::size_t>(buffer.bytesused, slot.length);
     frame.data.assign(static_cast<const std::uint8_t*>(slot.start),
                       static_cast<const std::uint8_t*>(slot.start) + used);
+    if (xioctl(device_, VIDIOC_QBUF, &buffer) < 0) {
+        error = errorText("VIDIOC_QBUF", errno);
+        return false;
+    }
+
+    // The sensor keeps filling buffers while the publisher works, so the queue
+    // can hold pictures older than the one just dequeued. Take the newest
+    // available frame and drop the backlog: a live picture matters more than a
+    // complete one.
+    frame.drained = 0;
+    for (int attempt = 0; attempt < kMaxDrain; ++attempt) {
+        v4l2_buffer newer{};
+        newer.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        newer.memory = V4L2_MEMORY_MMAP;
+        if (xioctl(device_, VIDIOC_DQBUF, &newer) < 0) {
+            break;  // EAGAIN: nothing newer is waiting
+        }
+        const Buffer& newerSlot = buffers_[newer.index];
+        const std::size_t newerUsed = std::min<std::size_t>(newer.bytesused, newerSlot.length);
+        frame.data.assign(static_cast<const std::uint8_t*>(newerSlot.start),
+                          static_cast<const std::uint8_t*>(newerSlot.start) + newerUsed);
+        if (xioctl(device_, VIDIOC_QBUF, &newer) < 0) {
+            error = errorText("VIDIOC_QBUF", errno);
+            return false;
+        }
+        ++frame.drained;
+    }
+
     frame.sequence = sequence_++;
     frame.timestampMs = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -192,11 +223,6 @@ bool V4l2Camera::grab(model::CameraFrame& frame, int timeoutMs, std::string& err
     frame.width = width_;
     frame.height = height_;
     frame.format = format_;
-
-    if (xioctl(device_, VIDIOC_QBUF, &buffer) < 0) {
-        error = errorText("VIDIOC_QBUF", errno);
-        return false;
-    }
     return true;
 }
 
