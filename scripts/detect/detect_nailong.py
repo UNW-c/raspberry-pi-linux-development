@@ -287,6 +287,8 @@ def main() -> int:
     parser.add_argument("--backend", choices=["auto", "onnxruntime", "opencv"], default="auto",
                         help="inference backend, auto prefers onnxruntime when installed")
     parser.add_argument("--count", type=int, default=0, help="stop after N frames (0 = forever)")
+    parser.add_argument("--idle-timeout", type=float, default=20.0,
+                        help="give up after this many seconds without a frame")
     args = parser.parse_args()
 
     threads = args.threads or max(1, (os.cpu_count() or 4))
@@ -312,6 +314,15 @@ def main() -> int:
     while not finished:
         frame = source.read()
         if frame is None:
+            if time.monotonic() - started > args.idle_timeout and processed == 0:
+                print(
+                    f"no frame within {args.idle_timeout:.0f}s, giving up - "
+                    f"is the camera page open at {args.url} ?",
+                    flush=True,
+                )
+                if stream is not None and stream.server is not None:
+                    stream.server.shutdown()
+                return 5
             time.sleep(0.01)
             continue
 

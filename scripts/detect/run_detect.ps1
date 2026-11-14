@@ -50,8 +50,17 @@ function Test-DetectionPython {
     if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) {
         return $false
     }
-    & $Path -c 'import cv2, numpy' 2>$null
-    return $LASTEXITCODE -eq 0
+    # A python without the packages writes a traceback on stderr, which would
+    # abort the script while ErrorActionPreference is Stop.
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $Path -c 'import cv2, numpy' *> $null
+        return ($LASTEXITCODE -eq 0)
+    }
+    finally {
+        $ErrorActionPreference = $previous
+    }
 }
 
 $candidates = @()
@@ -84,9 +93,16 @@ if ($null -eq $python) {
     Write-Host '  no Python with OpenCV found, preparing .venv-detect ...' -ForegroundColor Yellow
     if (-not (Test-Path -LiteralPath $python)) {
         $launcher = $null
-        foreach ($candidate in @('3.13', '3.12', '3.11')) {
-            & py "-$candidate" -c 'import sys' 2>$null
-            if ($LASTEXITCODE -eq 0) { $launcher = $candidate; break }
+        $previous = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            foreach ($candidate in @('3.13', '3.12', '3.11')) {
+                & py "-$candidate" -c 'import sys' *> $null
+                if ($LASTEXITCODE -eq 0) { $launcher = $candidate; break }
+            }
+        }
+        finally {
+            $ErrorActionPreference = $previous
         }
         if ($null -eq $launcher) {
             Write-Host '  install Python 3.11+ first' -ForegroundColor Red
