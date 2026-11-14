@@ -25,6 +25,12 @@ scripts/
 │   └── inspect_camera.sh   树莓派：相机诊断
 ├── mqtt/                MQTT 工具
 │   └── mqtt_listen.ps1  订阅并按行显示
+├── detect/              奶龙检测（电脑端 YOLOX）
+│   ├── detect.bat       双击入口
+│   ├── run_detect.ps1   复用已有 Python 环境并启动
+│   ├── detect_nailong.py  推理 + 画框 + 可选网页流
+│   ├── download_model.ps1 下载 ONNX 模型到 models/
+│   └── requirements.txt opencv + numpy（onnxruntime 可选）
 ├── setup/               环境准备
 │   ├── provision_pi.sh  树莓派工具链与依赖
 │   └── install_commands.ps1  把 bin/ 加入用户 PATH
@@ -42,4 +48,5 @@ scripts/
 | 起/停相机（树莓派） | `prts-camera-web start` / `stop` / `status` |
 | 换画质档位（树莓派） | `prts-camera-web restart --preset balanced` |
 | 量端到端延迟（PC） | `powershell -File scripts\camera\measure_latency.ps1` |
+| 跑奶龙检测（PC） | 双击 `scripts\detect\detect.bat` |
 | 装命令到 PATH | `powershell -File scripts\setup\install_commands.ps1` |

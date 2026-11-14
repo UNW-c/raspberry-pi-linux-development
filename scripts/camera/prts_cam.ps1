@@ -71,7 +71,9 @@ function Get-NodeContext {
     $port = [int](Get-PrstIniValue $values 'ssh.port' '22')
     $timeout = [int](Get-PrstIniValue $values 'ssh.connect_timeout' '10')
 
-    $endpoint = Resolve-PrstEndpoint -Candidates (Get-PrstHostCandidates -Primary $primary -Fallback $fallback) -Port $port
+    $candidates = Get-PrstLinkCandidates -RepositoryRoot $repositoryRoot -Primary $primary `
+        -Fallback $fallback
+    $endpoint = Resolve-PrstEndpoint -Candidates $candidates -Port $port
     if ($null -eq $endpoint) {
         return $null
     }

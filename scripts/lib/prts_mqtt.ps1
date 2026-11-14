@@ -202,6 +202,7 @@ function Resolve-PrstBrokerAddress {
 
     $scriptDirectory = $PSScriptRoot
     . (Join-Path $scriptDirectory 'prts_remote.ps1')
+    $repositoryRoot = ''
     if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
         $repositoryRoot = $scriptDirectory
         while ($repositoryRoot -and -not (Test-Path -LiteralPath (Join-Path $repositoryRoot 'CMakeLists.txt'))) {
@@ -213,7 +214,8 @@ function Resolve-PrstBrokerAddress {
     $primary = Get-PrstIniValue $values 'ssh.host' 'PRTS.local'
     $fallback = Get-PrstIniValue $values 'ssh.fallback_host' 'PRTS'
 
-    foreach ($candidate in (Get-PrstHostCandidates -Primary $primary -Fallback $fallback)) {
+    foreach ($candidate in (Get-PrstLinkCandidates -RepositoryRoot $repositoryRoot -Primary $primary `
+                -Fallback $fallback)) {
         $resolved = Get-PrstIPv4Address -HostName $candidate
         if (-not [string]::IsNullOrWhiteSpace($resolved)) {
             return $resolved

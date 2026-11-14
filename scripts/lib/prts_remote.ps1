@@ -148,7 +148,8 @@ function Resolve-PrstEndpoint {
 function Get-PrstHostCandidates {
     param(
         [string]$Primary,
-        [string]$Fallback
+        [string]$Fallback,
+        [string[]]$Tailscale = @()
     )
 
     $candidates = @()
@@ -161,7 +162,49 @@ function Get-PrstHostCandidates {
             $candidates += "$name.local"
         }
     }
+    # Tailscale addresses come last: on the same network the mDNS name answers
+    # faster, off it the tunnel address is the only way in.
+    foreach ($address in $Tailscale) {
+        if (-not [string]::IsNullOrWhiteSpace($address)) {
+            $candidates += $address
+        }
+    }
     return $candidates | Select-Object -Unique
+}
+
+# Reads the device addresses that are kept out of the repository (Tailscale IPs,
+# future network names). The file is optional: without it everything falls back
+# to the names in config/connection.ini.
+function Read-PrstPrivateDevices {
+    param([string]$RepositoryRoot)
+
+    if ([string]::IsNullOrWhiteSpace($RepositoryRoot)) {
+        return @{}
+    }
+    $path = Join-Path $RepositoryRoot 'config\devices.private.ini'
+    if (-not (Test-Path -LiteralPath $path)) {
+        return @{}
+    }
+    return Read-PrstIniFile -Path $path
+}
+
+# Candidate list with the private addresses folded in, in probe order.
+function Get-PrstLinkCandidates {
+    param(
+        [string]$RepositoryRoot,
+        [string]$Primary,
+        [string]$Fallback
+    )
+
+    $devices = Read-PrstPrivateDevices -RepositoryRoot $RepositoryRoot
+    $tailscale = @()
+    foreach ($key in @('tailscale.prts', 'tailscale.pi', 'tailscale.host')) {
+        if ($devices.ContainsKey($key) -and -not [string]::IsNullOrWhiteSpace($devices[$key])) {
+            $tailscale += $devices[$key]
+            break
+        }
+    }
+    return Get-PrstHostCandidates -Primary $Primary -Fallback $Fallback -Tailscale $tailscale
 }
 
 function Write-PrstLinkPanel {

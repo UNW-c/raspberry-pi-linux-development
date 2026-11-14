@@ -8,6 +8,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <csignal>
@@ -28,7 +29,11 @@ volatile std::sig_atomic_t g_running = 1;
 void handleStopSignal(int) { g_running = 0; }
 
 constexpr int kMaxStreamClients = 16;
-constexpr int kRequestTimeoutMs = 300;
+// How long a new connection may take to send its request head. A tunnel adds a
+// round trip before the first byte arrives, so this cannot be as short as a
+// local socket would allow.
+constexpr int kHeadTimeoutMs = 1500;
+constexpr int kRequestTimeoutMs = 3000;
 constexpr const char* kBoundary = "prtsframe";
 // Roughly five frames of send queue: enough to keep a wifi link busy, small
 // enough that a stalled reader cannot fall seconds behind the camera.
@@ -142,6 +147,40 @@ struct Viewer {
     std::uint64_t dropped{0};
 };
 
+// Flush pending data without blocking; EAGAIN simply means "try later".
+void flushViewers(std::vector<Viewer>& viewers) {
+    for (std::size_t index = 0; index < viewers.size();) {
+        Viewer& viewer = viewers[index];
+        bool dead = false;
+        while (viewer.sent < viewer.pending.size()) {
+            const ssize_t written = ::send(viewer.fd, viewer.pending.data() + viewer.sent,
+                                           viewer.pending.size() - viewer.sent, MSG_NOSIGNAL);
+            if (written > 0) {
+                viewer.sent += static_cast<std::size_t>(written);
+                continue;
+            }
+            if (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
+                break;
+            }
+            dead = true;
+            break;
+        }
+        if (viewer.sent >= viewer.pending.size()) {
+            if (!viewer.pending.empty()) {
+                ++viewer.delivered;
+                viewer.pending.clear();
+                viewer.sent = 0;
+            }
+        }
+        if (dead) {
+            ::close(viewer.fd);
+            viewers.erase(viewers.begin() + static_cast<std::ptrdiff_t>(index));
+            continue;
+        }
+        ++index;
+    }
+}
+
 }  // namespace
 
 CameraWebService::CameraWebService(driver::IMqttClient& mqtt, utils::Logger& logger)
@@ -158,22 +197,24 @@ const char* CameraWebService::pageHtml() {
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
   body {
-    margin: 0; padding: 20px 22px 16px;
+    margin: 0; padding: 0;
     background: #000; color: #f0f0f0;
-    font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font: 14px/1.7 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
-  header { display: flex; align-items: baseline; gap: 12px; }
-  .bar { color: #bfbfbf; }
-  .name { font-weight: 700; letter-spacing: .12em; }
-  .tag { margin-left: auto; color: #8a8a8a; letter-spacing: .18em; font-size: 11px; }
-  .rule { height: 1px; background: #2e2e2e; margin: 10px 0 14px; }
-  .frame { display: block; width: 100%; max-width: 480px; border: 1px solid #2e2e2e; background: #0a0a0a; image-rendering: pixelated; }
-  footer { display: flex; gap: 18px; flex-wrap: wrap; color: #8a8a8a; margin-top: 12px; }
+  .page { max-width: 1000px; margin: 0 auto; padding: 26px 28px 20px; }
+  header { display: flex; align-items: baseline; gap: 14px; }
+  .bar { color: #bfbfbf; font-size: 17px; }
+  .name { font-weight: 700; letter-spacing: .12em; font-size: 17px; }
+  .tag { margin-left: auto; color: #8a8a8a; letter-spacing: .18em; font-size: 12px; }
+  .rule { height: 1px; background: #2e2e2e; margin: 12px 0 16px; }
+  .frame { display: block; width: 100%; border: 1px solid #2e2e2e; background: #0a0a0a; }
+  footer { display: flex; gap: 22px; flex-wrap: wrap; color: #8a8a8a; margin-top: 14px; font-size: 13px; }
   footer b { color: #bfbfbf; font-weight: 400; }
   .warn { color: #c9a227; }
 </style>
 </head>
 <body>
+<div class="page">
 <header>
   <span class="bar">&#9612;</span>
   <span class="name">PRTS</span>
@@ -194,6 +235,7 @@ const char* CameraWebService::pageHtml() {
   <span>MQTT <b id="mqtt">-</b></span>
   <span id="note" class="warn"></span>
 </footer>
+</div>
 <script>
 // Frames are read with the Stream API instead of <img src="/stream"> so the page
 // can time every picture against its capture stamp and drop frames it is too
@@ -496,36 +538,7 @@ int CameraWebService::run(const Options& options) {
         }
 
         // Flush pending data without blocking; EAGAIN simply means "try later".
-        for (std::size_t index = 0; index < viewers.size();) {
-            Viewer& viewer = viewers[index];
-            bool dead = false;
-            while (viewer.sent < viewer.pending.size()) {
-                const ssize_t written = ::send(viewer.fd, viewer.pending.data() + viewer.sent,
-                                               viewer.pending.size() - viewer.sent, MSG_NOSIGNAL);
-                if (written > 0) {
-                    viewer.sent += static_cast<std::size_t>(written);
-                    continue;
-                }
-                if (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
-                    break;
-                }
-                dead = true;
-                break;
-            }
-            if (viewer.sent >= viewer.pending.size()) {
-                if (!viewer.pending.empty()) {
-                    ++viewer.delivered;
-                    viewer.pending.clear();
-                    viewer.sent = 0;
-                }
-            }
-            if (dead) {
-                ::close(viewer.fd);
-                viewers.erase(viewers.begin() + static_cast<std::ptrdiff_t>(index));
-                continue;
-            }
-            ++index;
-        }
+        flushViewers(viewers);
 
         const std::int64_t now = nowMs();
         if (now - lastFpsMark >= 1000) {
@@ -540,25 +553,35 @@ int CameraWebService::run(const Options& options) {
         const int client = ::accept(listenSocket, reinterpret_cast<sockaddr*>(&peer), &peerLength);
         if (client >= 0 && viewers.size() < kMaxStreamClients + 4) {
             timeval timeout{};
-            timeout.tv_sec = 0;
-            timeout.tv_usec = kRequestTimeoutMs * 1000;
-            ::setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+            timeout.tv_sec = kRequestTimeoutMs / 1000;
+            timeout.tv_usec = (kRequestTimeoutMs % 1000) * 1000;
             ::setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 
-            // The request may arrive in several segments (tunnels do this), so
-            // read until the header terminator instead of trusting one recv.
+            // The request may arrive in several segments and a tunnel adds a
+            // round trip before the first one, so wait for a budget rather than
+            // one recv. Viewers keep draining while we wait, otherwise a client
+            // that opens a connection and stays quiet would freeze the stream.
             std::string raw;
             char buffer[2048] = {0};
-            for (int attempt = 0; attempt < 4 && raw.find("\r\n\r\n") == std::string::npos;
-                 ++attempt) {
-                const ssize_t received = ::recv(client, buffer, sizeof(buffer) - 1, 0);
-                if (received <= 0) {
+            const std::int64_t headDeadline = nowMs() + kHeadTimeoutMs;
+            while (raw.find("\r\n\r\n") == std::string::npos && raw.size() < 4000) {
+                const std::int64_t left = headDeadline - nowMs();
+                if (left <= 0) {
                     break;
                 }
-                raw.append(buffer, static_cast<std::size_t>(received));
-                if (raw.size() > 4000) {
+                pollfd incoming{client, POLLIN, 0};
+                const int ready =
+                    ::poll(&incoming, 1, static_cast<int>(std::min<std::int64_t>(left, 50)));
+                if (ready > 0) {
+                    const ssize_t received = ::recv(client, buffer, sizeof(buffer) - 1, 0);
+                    if (received <= 0) {
+                        break;
+                    }
+                    raw.append(buffer, static_cast<std::size_t>(received));
+                } else if (ready < 0 && errno != EINTR) {
                     break;
                 }
+                flushViewers(viewers);
             }
             const driver::HttpRequest request = driver::parseHttpRequestHead(raw);
             const bool headOnly = request.method == "HEAD";

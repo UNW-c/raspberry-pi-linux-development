@@ -56,7 +56,8 @@ $password = Get-PrstIniValue $values 'ssh.password' '123456'
 $port = [int](Get-PrstIniValue $values 'ssh.port' '22')
 $connectTimeout = [int](Get-PrstIniValue $values 'ssh.connect_timeout' '10')
 
-$candidates = Get-PrstHostCandidates -Primary $hostName -Fallback $fallbackHost
+$candidates = Get-PrstLinkCandidates -RepositoryRoot $repositoryRoot -Primary $hostName `
+    -Fallback $fallbackHost
 $endpoint = Resolve-PrstEndpoint -Candidates $candidates -Port $port
 if ($null -eq $endpoint) {
     Write-Host '  PRTS is unreachable, nothing started.' -ForegroundColor Red

@@ -8,6 +8,20 @@ prts_tests
 # Local scratch space used by ad-hoc ssh operations
 .tmp-ops/
 
+# Private device addresses (Tailscale IPs, wifi names) and the operator notes
+config/devices.private.ini
+提示词.md
+
+# Desktop detector: python environment, model weights, scratch log
+.venv-detect/
+models/
+*.onnx
+detect-test.log
+detect-test.err
+__pycache__/
+*.pyc
+pip-unpack-*/
+
 # Camera frames saved by scripts/camera_view.ps1 -SaveDir
 frames/
 

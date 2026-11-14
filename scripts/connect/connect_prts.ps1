@@ -58,7 +58,8 @@ if (-not $NoBanner) {
     Set-PrstConsoleSize -Columns $windowColumns -Rows $windowRows
 }
 
-$candidates = Get-PrstHostCandidates -Primary $hostName -Fallback $fallbackHost
+$candidates = Get-PrstLinkCandidates -RepositoryRoot $repositoryRoot -Primary $hostName `
+    -Fallback $fallbackHost
 
 $endpoint = Resolve-PrstEndpoint -Candidates $candidates -Port $port
 

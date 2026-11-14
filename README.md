@@ -98,6 +98,9 @@ prts-mqtt --help       # 帮助
 | `scripts/camera/` | `measure_latency.ps1` | Windows | 量端到端帧年龄（经隧道，含时钟校准） |
 | `scripts/camera/` | `inspect_camera.sh` | 树莓派 | 列出 USB / V4L2 / 设备树里的相机信息 |
 | `scripts/mqtt/` | `mqtt_listen.ps1` | Windows | 订阅主题并按行显示 |
+| `scripts/detect/` | `detect.bat` / `run_detect.ps1` | Windows | 双击跑奶龙检测（复用已有 Python 环境） |
+| `scripts/detect/` | `detect_nailong.py` | Windows | YOLOX 推理 + 画框 + 可选网页流 |
+| `scripts/detect/` | `download_model.ps1` | Windows | 下载 ONNX 模型到 `models/`（不入库） |
 | `scripts/setup/` | `install_commands.ps1` | Windows | 把 `bin` 加入用户 PATH（`prts-cam` 全局可用） |
 | `scripts/setup/` | `provision_pi.sh` | 树莓派 (root) | 安装工具链与依赖、建目录、导出 locale |
 | `bin/` | `prts-cam.cmd` | Windows | 命令行入口：`prts-cam [web\|view\|status\|stop]` |
@@ -161,6 +164,30 @@ powershell -ExecutionPolicy Bypass -File scripts\camera\measure_latency.ps1
 
 因为网页服务只监听节点的 `127.0.0.1`、通过 SSH 本地转发访问，
 所以直连内网和通过内网穿透（frp）连 SSH 时，浏览器里的地址和用法完全一样。
+
+## 奶龙检测
+
+电脑端跑 YOLOX（[nkxingxh/NailongDetection](https://github.com/nkxingxh/NailongDetection)，
+ONNX，AGPL-3.0），从相机页面取帧、画框，树莓派不参与推理：
+
+```powershell
+scripts\detect\detect.bat                 # 弹窗显示带框画面
+scripts\detect\detect.bat --http 18081    # 或者开个带框的网页流
+```
+
+依赖只有 opencv + numpy（OpenCV 自带 ONNX 导入器），脚本会复用机器上已有的
+Python 环境。模型下载到 `models/`，不入库。细节见 [docs/06-detect.md](docs/06-detect.md)。
+
+## 私有设备地址
+
+Tailscale 的 IP、之后的 WiFi 名称这类信息放在 `config/devices.private.ini`，
+该文件在 `.gitignore` 里，不会进仓库。连接、部署、相机脚本会自动读取它，
+把 Tailscale 地址作为局域网名字不通时的兜底：
+
+```powershell
+# 探测顺序：PRTS -> PRTS.local -> Tailscale 地址
+powershell -File scripts\connect\connect_prts.ps1
+```
 
 ## 配置
 
