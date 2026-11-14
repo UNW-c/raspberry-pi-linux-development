@@ -29,6 +29,9 @@ volatile std::sig_atomic_t g_running = 1;
 void handleStopSignal(int) { g_running = 0; }
 
 constexpr int kMaxStreamClients = 16;
+// Connections allowed to be mid-handshake at once; anything beyond that is
+// closed instead of queued.
+constexpr std::size_t kMaxPendingHeads = 8;
 // How long a new connection may take to send its request head. A tunnel adds a
 // round trip before the first byte arrives, so this cannot be as short as a
 // local socket would allow.
@@ -136,6 +139,15 @@ bool jpegDimensions(const std::string& data, int& width, int& height) {
     }
     return false;
 }
+
+// A connection whose request head has not fully arrived yet. A tunnel can add a
+// round trip before the first byte, so the head is collected over several loop
+// iterations instead of blocking the camera on it.
+struct PendingHead {
+    int fd{-1};
+    std::string raw;
+    std::int64_t deadline{0};
+};
 
 // One MJPEG client. Writes never block: the newest frame replaces whatever is
 // still queued, so a slow browser drops frames instead of building a backlog.
@@ -466,6 +478,74 @@ int CameraWebService::run(const Options& options) {
     std::int64_t lastFpsMark = nowMs();
     std::int64_t lastStamp = 0;
     std::int64_t latencyMs = -1;
+    std::vector<PendingHead> pendingHeads;
+
+    // Answers one request and always closes its socket.
+    auto dispatchRequest = [&](int client, const std::string& raw) {
+        const driver::HttpRequest request = driver::parseHttpRequestHead(raw);
+        const bool headOnly = request.method == "HEAD";
+
+        if (!request.ok) {
+            const std::string body = "bad request\n";
+            sendAll(client, httpResponse("400 Bad Request", "text/plain", body, !headOnly));
+            ::close(client);
+        } else if (request.path == "/" || request.path == "/index.html") {
+            const std::string page = pageHtml();
+            sendAll(client, httpResponse("200 OK", "text/html; charset=utf-8", page, !headOnly));
+            ::close(client);
+        } else if (request.path == "/stream") {
+            if (sendAll(client, streamHeaders())) {
+                // The stream is a live feed, not a file: no Nagle batching, and
+                // a shallow send queue so the newest frame is not stuck behind a
+                // pile of older ones when a tunnel is in between.
+                int nodelay = 1;
+                ::setsockopt(client, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
+                int sendBuffer = kStreamSendBuffer;
+                ::setsockopt(client, SOL_SOCKET, SO_SNDBUF, &sendBuffer, sizeof(sendBuffer));
+                const int flags = ::fcntl(client, F_GETFL, 0);
+                ::fcntl(client, F_SETFL, flags | O_NONBLOCK);
+                Viewer viewer;
+                viewer.fd = client;
+                viewers.push_back(viewer);
+            } else {
+                ::close(client);
+            }
+        } else if (request.path == "/snapshot") {
+            if (latestFrame.empty()) {
+                sendAll(client, httpResponse("503 Service Unavailable", "text/plain",
+                                             "no frame yet\n", !headOnly));
+            } else {
+                sendAll(client, httpResponse("200 OK", "image/jpeg", latestFrame, !headOnly));
+            }
+            ::close(client);
+        } else if (request.path == "/status") {
+            std::string body = "{";
+            body += "\"frames\":" + std::to_string(frameCount);
+            body += ",\"fps\":" + std::to_string(fps);
+            body += ",\"bytes\":" + std::to_string(byteCount);
+            body += ",\"clients\":" + std::to_string(viewers.size());
+            body += ",\"width\":" + std::to_string(width);
+            body += ",\"height\":" + std::to_string(height);
+            body += ",\"latency_ms\":" + std::to_string(latencyMs);
+            std::uint64_t dropped = 0;
+            for (const Viewer& viewer : viewers) {
+                dropped += viewer.dropped;
+            }
+            body += ",\"dropped\":" + std::to_string(dropped);
+            body += ",\"mqtt\":\"" + std::string(mqttReady ? "up" : "down") + "\"";
+            body += ",\"last_bytes\":" + std::to_string(latestFrame.size());
+            body += ",\"stamp\":" + std::to_string(lastStamp);
+            // Lets a browser convert its own clock into the node's clock and
+            // show the real age of the picture it is displaying.
+            body += ",\"server_ms\":" + std::to_string(epochMs());
+            body += "}";
+            sendAll(client, httpResponse("200 OK", "application/json", body, !headOnly));
+            ::close(client);
+        } else {
+            sendAll(client, httpResponse("404 Not Found", "text/plain", "not found\n", !headOnly));
+            ::close(client);
+        }
+    };
 
     while (g_running != 0) {
         const std::int64_t loopStart = nowMs();
@@ -547,104 +627,51 @@ int CameraWebService::run(const Options& options) {
             lastFpsMark = now;
         }
 
-        // Accept and answer one request per loop iteration.
+        // Finish reading request heads that arrived slowly. Nothing here blocks,
+        // so a quiet connection cannot stall the frames.
+        for (std::size_t index = 0; index < pendingHeads.size();) {
+            PendingHead& head = pendingHeads[index];
+            bool done = false;
+            pollfd incoming{head.fd, POLLIN, 0};
+            if (::poll(&incoming, 1, 0) > 0) {
+                char buffer[2048];
+                const ssize_t received = ::recv(head.fd, buffer, sizeof(buffer) - 1, 0);
+                if (received > 0) {
+                    head.raw.append(buffer, static_cast<std::size_t>(received));
+                    done = head.raw.find("\r\n\r\n") != std::string::npos ||
+                           head.raw.size() >= 4000;
+                } else {
+                    done = true;
+                }
+            } else if (nowMs() >= head.deadline) {
+                done = true;
+            }
+            if (done) {
+                dispatchRequest(head.fd, head.raw);
+                pendingHeads.erase(pendingHeads.begin() + static_cast<std::ptrdiff_t>(index));
+                continue;
+            }
+            ++index;
+        }
+
+        // Accept one connection per iteration and let the loop above collect its
+        // request head; a tunnel can add a round trip before the first byte.
         sockaddr_in peer{};
         socklen_t peerLength = sizeof(peer);
         const int client = ::accept(listenSocket, reinterpret_cast<sockaddr*>(&peer), &peerLength);
-        if (client >= 0 && viewers.size() < kMaxStreamClients + 4) {
-            timeval timeout{};
-            timeout.tv_sec = kRequestTimeoutMs / 1000;
-            timeout.tv_usec = (kRequestTimeoutMs % 1000) * 1000;
-            ::setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
-
-            // The request may arrive in several segments and a tunnel adds a
-            // round trip before the first one, so wait for a budget rather than
-            // one recv. Viewers keep draining while we wait, otherwise a client
-            // that opens a connection and stays quiet would freeze the stream.
-            std::string raw;
-            char buffer[2048] = {0};
-            const std::int64_t headDeadline = nowMs() + kHeadTimeoutMs;
-            while (raw.find("\r\n\r\n") == std::string::npos && raw.size() < 4000) {
-                const std::int64_t left = headDeadline - nowMs();
-                if (left <= 0) {
-                    break;
-                }
-                pollfd incoming{client, POLLIN, 0};
-                const int ready =
-                    ::poll(&incoming, 1, static_cast<int>(std::min<std::int64_t>(left, 50)));
-                if (ready > 0) {
-                    const ssize_t received = ::recv(client, buffer, sizeof(buffer) - 1, 0);
-                    if (received <= 0) {
-                        break;
-                    }
-                    raw.append(buffer, static_cast<std::size_t>(received));
-                } else if (ready < 0 && errno != EINTR) {
-                    break;
-                }
-                flushViewers(viewers);
-            }
-            const driver::HttpRequest request = driver::parseHttpRequestHead(raw);
-            const bool headOnly = request.method == "HEAD";
-
-            if (!request.ok) {
-                const std::string body = "bad request\n";
-                sendAll(client, httpResponse("400 Bad Request", "text/plain", body, !headOnly));
-                ::close(client);
-            } else if (request.path == "/" || request.path == "/index.html") {
-                const std::string page = pageHtml();
-                sendAll(client, httpResponse("200 OK", "text/html; charset=utf-8", page, !headOnly));
-                ::close(client);
-            } else if (request.path == "/stream") {
-                if (sendAll(client, streamHeaders())) {
-                    // The stream is a live feed, not a file: no Nagle batching,
-                    // and a shallow send queue so the newest frame is not stuck
-                    // behind a pile of older ones when a tunnel is in between.
-                    int nodelay = 1;
-                    ::setsockopt(client, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
-                    int sendBuffer = kStreamSendBuffer;
-                    ::setsockopt(client, SOL_SOCKET, SO_SNDBUF, &sendBuffer, sizeof(sendBuffer));
-                    const int flags = ::fcntl(client, F_GETFL, 0);
-                    ::fcntl(client, F_SETFL, flags | O_NONBLOCK);
-                    Viewer viewer;
-                    viewer.fd = client;
-                    viewers.push_back(viewer);
-                } else {
-                    ::close(client);
-                }
-            } else if (request.path == "/snapshot") {
-                if (latestFrame.empty()) {
-                    sendAll(client, httpResponse("503 Service Unavailable", "text/plain",
-                                                 "no frame yet\n", !headOnly));
-                } else {
-                    sendAll(client, httpResponse("200 OK", "image/jpeg", latestFrame, !headOnly));
-                }
-                ::close(client);
-            } else if (request.path == "/status") {
-                std::string body = "{";
-                body += "\"frames\":" + std::to_string(frameCount);
-                body += ",\"fps\":" + std::to_string(fps);
-                body += ",\"bytes\":" + std::to_string(byteCount);
-                body += ",\"clients\":" + std::to_string(viewers.size());
-                body += ",\"width\":" + std::to_string(width);
-                body += ",\"height\":" + std::to_string(height);
-                body += ",\"latency_ms\":" + std::to_string(latencyMs);
-                std::uint64_t dropped = 0;
-                for (const Viewer& viewer : viewers) {
-                    dropped += viewer.dropped;
-                }
-                body += ",\"dropped\":" + std::to_string(dropped);
-                body += ",\"mqtt\":\"" + std::string(mqttReady ? "up" : "down") + "\"";
-                body += ",\"last_bytes\":" + std::to_string(latestFrame.size());
-                body += ",\"stamp\":" + std::to_string(lastStamp);
-                // Lets a browser convert its own clock into the node's clock and
-                // show the real age of the picture it is displaying.
-                body += ",\"server_ms\":" + std::to_string(epochMs());
-                body += "}";
-                sendAll(client, httpResponse("200 OK", "application/json", body, !headOnly));
+        if (client >= 0) {
+            if (viewers.size() >= kMaxStreamClients + 4 ||
+                pendingHeads.size() >= kMaxPendingHeads) {
                 ::close(client);
             } else {
-                sendAll(client, httpResponse("404 Not Found", "text/plain", "not found\n", !headOnly));
-                ::close(client);
+                timeval timeout{};
+                timeout.tv_sec = kRequestTimeoutMs / 1000;
+                timeout.tv_usec = (kRequestTimeoutMs % 1000) * 1000;
+                ::setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+                PendingHead head;
+                head.fd = client;
+                head.deadline = nowMs() + kHeadTimeoutMs;
+                pendingHeads.push_back(head);
             }
         }
 
@@ -658,6 +685,9 @@ int CameraWebService::run(const Options& options) {
 
     for (Viewer& viewer : viewers) {
         ::close(viewer.fd);
+    }
+    for (PendingHead& head : pendingHeads) {
+        ::close(head.fd);
     }
     ::close(listenSocket);
     mqtt_.disconnect();

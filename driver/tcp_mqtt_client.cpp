@@ -29,6 +29,19 @@ bool setSocketTimeout(int socket, int option, int seconds) {
     return ::setsockopt(socket, SOL_SOCKET, option, &timeout, sizeof(timeout)) == 0;
 }
 
+// Millisecond precision matters: the reader polls with a few milliseconds of
+// budget, and rounding that up to a full second stalls whoever is waiting on
+// the same thread (the web server answers requests in that loop).
+bool setSocketTimeoutMs(int socket, int option, int milliseconds) {
+    if (milliseconds < 1) {
+        milliseconds = 1;
+    }
+    timeval timeout{};
+    timeout.tv_sec = milliseconds / 1000;
+    timeout.tv_usec = (milliseconds % 1000) * 1000;
+    return ::setsockopt(socket, SOL_SOCKET, option, &timeout, sizeof(timeout)) == 0;
+}
+
 }  // namespace
 
 TcpMqttClient::~TcpMqttClient() { disconnect(); }
@@ -122,7 +135,7 @@ bool TcpMqttClient::readPacket(std::string& packet, int timeoutMs, std::string& 
         return false;
     }
 
-    setSocketTimeout(socket_, SO_RCVTIMEO, (timeoutMs + 999) / 1000);
+    setSocketTimeoutMs(socket_, SO_RCVTIMEO, timeoutMs);
 
     char byte = 0;
     ssize_t received = ::recv(socket_, &byte, 1, 0);

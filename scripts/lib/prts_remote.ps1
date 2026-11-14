@@ -111,9 +111,27 @@ function Get-PrstIPv4Address {
     return $null
 }
 
+# Tailscale hands out addresses from 100.64.0.0/10. When MagicDNS is on, the
+# plain host name resolves to that range, so a naive lookup silently routes the
+# ssh session (and the camera stream inside it) through the tunnel instead of
+# the local network. The local path is both faster and the one to prefer.
+function Test-PrstTailscaleAddress {
+    param([string]$Address)
+
+    if ([string]::IsNullOrWhiteSpace($Address)) {
+        return $false
+    }
+    $parts = $Address.Split('.')
+    if ($parts.Length -ne 4) {
+        return $false
+    }
+    return $parts[0] -eq '100' -and [int]$parts[1] -ge 64 -and [int]$parts[1] -le 127
+}
+
 # Returns the first candidate that answers on the SSH port. DNS/mDNS lookup is
 # separate from the TCP probe: a cold mDNS resolution can take well over a
-# second, so the socket timeout must not be used to bound it.
+# second, so the socket timeout must not be used to bound it. Local addresses are
+# tried first; the virtual network is only used when nothing local answers.
 function Resolve-PrstEndpoint {
     param(
         [Parameter(Mandatory = $true)][string[]]$Candidates,
@@ -121,22 +139,23 @@ function Resolve-PrstEndpoint {
         [int]$TimeoutMs = 3000
     )
 
+    $resolved = @()
     foreach ($candidate in $Candidates) {
         $address = Get-PrstIPv4Address -HostName $candidate
-        if (-not [string]::IsNullOrWhiteSpace($address)) {
-            if (Test-PrstRemotePort -HostName $address -Port $Port -TimeoutMs $TimeoutMs) {
-                return [pscustomobject]@{
-                    Name = $candidate
-                    Address = $address
-                }
-            }
-            continue
+        if ([string]::IsNullOrWhiteSpace($address)) {
+            $address = $candidate  # let the OS try the name directly
         }
-        # Unresolvable name: give the OS one direct attempt before giving up.
-        if (Test-PrstRemotePort -HostName $candidate -Port $Port -TimeoutMs $TimeoutMs) {
+        $resolved += [pscustomobject]@{ Name = $candidate; Address = $address }
+    }
+
+    $ordered = @($resolved | Where-Object { -not (Test-PrstTailscaleAddress -Address $_.Address) }) +
+        @($resolved | Where-Object { Test-PrstTailscaleAddress -Address $_.Address })
+
+    foreach ($entry in $ordered) {
+        if (Test-PrstRemotePort -HostName $entry.Address -Port $Port -TimeoutMs $TimeoutMs) {
             return [pscustomobject]@{
-                Name = $candidate
-                Address = $candidate
+                Name = $entry.Name
+                Address = $entry.Address
             }
         }
     }
@@ -188,7 +207,9 @@ function Read-PrstPrivateDevices {
     return Read-PrstIniFile -Path $path
 }
 
-# Candidate list with the private addresses folded in, in probe order.
+# Candidate list with the private addresses folded in, in probe order. The LAN
+# address is a hint for when mDNS is unavailable; the virtual network address is
+# the last resort only.
 function Get-PrstLinkCandidates {
     param(
         [string]$RepositoryRoot,
@@ -197,14 +218,20 @@ function Get-PrstLinkCandidates {
     )
 
     $devices = Read-PrstPrivateDevices -RepositoryRoot $RepositoryRoot
-    $tailscale = @()
-    foreach ($key in @('tailscale.prts', 'tailscale.pi', 'tailscale.host')) {
+    $extra = @()
+    foreach ($key in @('lan.prts', 'lan.pi', 'lan.host')) {
         if ($devices.ContainsKey($key) -and -not [string]::IsNullOrWhiteSpace($devices[$key])) {
-            $tailscale += $devices[$key]
+            $extra += $devices[$key]
             break
         }
     }
-    return Get-PrstHostCandidates -Primary $Primary -Fallback $Fallback -Tailscale $tailscale
+    foreach ($key in @('tailscale.prts', 'tailscale.pi', 'tailscale.host')) {
+        if ($devices.ContainsKey($key) -and -not [string]::IsNullOrWhiteSpace($devices[$key])) {
+            $extra += $devices[$key]
+            break
+        }
+    }
+    return Get-PrstHostCandidates -Primary $Primary -Fallback $Fallback -Tailscale $extra
 }
 
 function Write-PrstLinkPanel {
