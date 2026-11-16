@@ -1,0 +1,175 @@
+<#
+.SYNOPSIS
+    PRTS video stream: V4L2 + FFmpeg + RTSP on the node, watched in the browser.
+
+.DESCRIPTION
+    Replaces the MQTT image path for the live picture:
+      1. asks the node to run mediamtx (RTSP server) and the ffmpeg publisher
+      2. opens ssh -L 127.0.0.1:8888 (HLS) and 127.0.0.1:8554 (RTSP)
+      3. opens the HLS player page in the default browser
+      4. keeps the tunnel alive until Ctrl+C
+
+    The node side listens on loopback only, so the same command works on the
+    LAN and through a tunneled SSH port.
+
+.EXAMPLE
+    powershell -ExecutionPolicy Bypass -File stream\start-stream.ps1
+
+.EXAMPLE
+    powershell -ExecutionPolicy Bypass -File stream\start-stream.ps1 -Link tailscale -NoBrowser -Seconds 20
+
+.EXAMPLE
+    powershell -ExecutionPolicy Bypass -File stream\start-stream.ps1 -NodeOptions "--copy"
+#>
+[CmdletBinding()]
+param(
+    [string]$ConfigPath = '',
+    [int]$HlsPort = 8888,
+    [int]$RtspPort = 8554,
+    [ValidateSet('auto', 'lan', 'tailscale')]
+    [string]$Link = 'auto',
+    [string]$NodeOptions = '',
+    [switch]$NoBrowser,
+    [int]$Seconds = 0
+)
+
+$ErrorActionPreference = 'Stop'
+
+try {
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $OutputEncoding = [System.Text.Encoding]::UTF8
+}
+catch {
+    # Best effort only.
+}
+
+$scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repositoryRoot = $scriptDirectory
+while ($repositoryRoot -and -not (Test-Path -LiteralPath (Join-Path $repositoryRoot 'CMakeLists.txt'))) {
+    $repositoryRoot = Split-Path -Parent $repositoryRoot
+}
+. (Join-Path $repositoryRoot 'scripts\lib\prts_remote.ps1')
+
+if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
+    $ConfigPath = Join-Path $repositoryRoot 'config\connection.ini'
+}
+$values = Read-PrstIniFile -Path $ConfigPath
+$hostName = Get-PrstIniValue $values 'ssh.host' 'PRTS.local'
+$fallbackHost = Get-PrstIniValue $values 'ssh.fallback_host' 'PRTS'
+$user = Get-PrstIniValue $values 'ssh.user' 'seven'
+$password = Get-PrstIniValue $values 'ssh.password' '123456'
+$port = [int](Get-PrstIniValue $values 'ssh.port' '22')
+$connectTimeout = [int](Get-PrstIniValue $values 'ssh.connect_timeout' '10')
+
+$candidates = Get-PrstLinkCandidates -RepositoryRoot $repositoryRoot -Primary $hostName `
+    -Fallback $fallbackHost -Mode $Link
+$endpoint = Resolve-PrstEndpoint -Candidates $candidates -Port $port
+if ($null -eq $endpoint) {
+    Write-Host '  PRTS is unreachable, nothing started.' -ForegroundColor Red
+    exit 2
+}
+
+$target = "$user@$($endpoint.Address)"
+$sshOptions = @(
+    '-o', 'StrictHostKeyChecking=accept-new',
+    '-o', 'NumberOfPasswordPrompts=1',
+    '-o', "ConnectTimeout=$connectTimeout",
+    '-p', "$port"
+)
+
+# The playlist is the readiness signal: the port can be open while mediamtx is
+# still waiting for the publisher.
+function Test-StreamPage {
+    return (Test-PrstHttpPage -Port $HlsPort -Path '/prts/index.m3u8' -TimeoutSeconds 4) -ge 0
+}
+
+Write-PrstLinkPanel -Node "$user@$($endpoint.Name) ($($endpoint.Address))" -State 'STREAM' `
+    -Detail "hls $HlsPort, rtsp $RtspPort"
+
+$passwordState = New-PrstPasswordEnvironment -Password $password
+$tunnel = $null
+
+try {
+    Write-Host '  starting the node side stream ...'
+    $remoteCommand = "~/.local/bin/prts-stream start $NodeOptions"
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & ssh @sshOptions $target $remoteCommand 2>&1 |
+            ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+    }
+    finally {
+        $ErrorActionPreference = $previous
+    }
+
+    if (Test-StreamPage) {
+        Write-Host "  a tunnel on $HlsPort already serves the stream, reusing it." -ForegroundColor DarkGray
+    }
+    else {
+        if (Test-PrstRemotePort -HostName '127.0.0.1' -Port $HlsPort -TimeoutMs 400) {
+            $removed = Stop-PrstSshListenerOnPort -Port $HlsPort
+            if ($removed -gt 0) {
+                Write-Host "  closed $removed stale tunnel(s) on port $HlsPort." -ForegroundColor DarkGray
+                Start-Sleep -Milliseconds 500
+            }
+        }
+
+        Write-Host "  opening ssh tunnel hls $HlsPort, rtsp $RtspPort ..."
+        $arguments = @('-N') + $sshOptions + @(
+            '-o', 'ExitOnForwardFailure=yes',
+            '-o', 'ServerAliveInterval=20',
+            '-L', "127.0.0.1:$HlsPort`:127.0.0.1:$HlsPort",
+            '-L', "127.0.0.1:$RtspPort`:127.0.0.1:$RtspPort",
+            $target
+        )
+        $tunnelLog = Join-Path $env:TEMP ("prts-stream-" + [guid]::NewGuid().ToString('N') + ".log")
+        $tunnel = Start-Process -FilePath 'ssh' -ArgumentList $arguments -WindowStyle Hidden `
+            -PassThru -RedirectStandardError $tunnelLog
+
+        $deadline = (Get-Date).AddSeconds(20)
+        $ready = $false
+        while ((Get-Date) -lt $deadline) {
+            if (Test-StreamPage) {
+                $ready = $true
+                break
+            }
+            if ($tunnel.HasExited) { break }
+            Start-Sleep -Milliseconds 400
+        }
+        if (-not $ready) {
+            Write-Host "  the stream page did not answer on port $HlsPort." -ForegroundColor Red
+            if (Test-Path -LiteralPath $tunnelLog) {
+                Get-Content -LiteralPath $tunnelLog -ErrorAction SilentlyContinue |
+                    Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                    ForEach-Object { Write-Host "  ssh: $_" -ForegroundColor DarkYellow }
+                Remove-Item -LiteralPath $tunnelLog -Force -ErrorAction SilentlyContinue
+            }
+            Write-Host '  check on the node: ~/.local/bin/prts-stream status' -ForegroundColor Yellow
+            exit 3
+        }
+        Remove-Item -LiteralPath $tunnelLog -Force -ErrorAction SilentlyContinue
+    }
+
+    $url = "http://127.0.0.1:$HlsPort/prts"
+    Write-Host ''
+    Write-Host "  browser: $url" -ForegroundColor Green
+    Write-Host "  rtsp:    rtsp://127.0.0.1:$RtspPort/prts (needs a player)" -ForegroundColor DarkGray
+    if (-not $NoBrowser) {
+        Start-Process $url
+    }
+
+    if ($Seconds -gt 0) {
+        Write-Host "  (test mode: keeping the tunnel for $Seconds s)" -ForegroundColor DarkGray
+        Start-Sleep -Seconds $Seconds
+    }
+    else {
+        Write-Host '  Ctrl+C to close the tunnel.' -ForegroundColor DarkGray
+        while ($true) { Start-Sleep -Seconds 1 }
+    }
+}
+finally {
+    if ($null -ne $tunnel -and -not $tunnel.HasExited) {
+        Stop-Process -Id $tunnel.Id -Force -ErrorAction SilentlyContinue
+    }
+    Remove-PrstPasswordEnvironment -State $passwordState
+}

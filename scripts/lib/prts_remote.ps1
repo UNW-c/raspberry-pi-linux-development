@@ -209,29 +209,54 @@ function Read-PrstPrivateDevices {
 
 # Candidate list with the private addresses folded in, in probe order. The LAN
 # address is a hint for when mDNS is unavailable; the virtual network address is
-# the last resort only.
+# the last resort only. -Mode picks the link explicitly:
+#   auto       local first, virtual network as a fallback (default)
+#   lan        local only
+#   tailscale  only the virtual network address
 function Get-PrstLinkCandidates {
     param(
         [string]$RepositoryRoot,
         [string]$Primary,
-        [string]$Fallback
+        [string]$Fallback,
+        [ValidateSet('auto', 'lan', 'tailscale')]
+        [string]$Mode = 'auto'
     )
 
     $devices = Read-PrstPrivateDevices -RepositoryRoot $RepositoryRoot
-    $extra = @()
+    $lanHint = ''
     foreach ($key in @('lan.prts', 'lan.pi', 'lan.host')) {
         if ($devices.ContainsKey($key) -and -not [string]::IsNullOrWhiteSpace($devices[$key])) {
-            $extra += $devices[$key]
+            $lanHint = $devices[$key]
             break
         }
     }
+    $virtual = ''
     foreach ($key in @('tailscale.prts', 'tailscale.pi', 'tailscale.host')) {
         if ($devices.ContainsKey($key) -and -not [string]::IsNullOrWhiteSpace($devices[$key])) {
-            $extra += $devices[$key]
+            $virtual = $devices[$key]
             break
         }
     }
-    return Get-PrstHostCandidates -Primary $Primary -Fallback $Fallback -Tailscale $extra
+
+    if ($Mode -eq 'tailscale') {
+        if ([string]::IsNullOrWhiteSpace($virtual)) {
+            return @()
+        }
+        return @($virtual)
+    }
+
+    $local = @()
+    if (-not [string]::IsNullOrWhiteSpace($lanHint)) {
+        $local += $lanHint
+    }
+    $candidates = @(Get-PrstHostCandidates -Primary $Primary -Fallback $Fallback -Tailscale $local)
+    if ($Mode -eq 'lan') {
+        return @($candidates | Where-Object { -not (Test-PrstTailscaleAddress -Address $_) })
+    }
+    if (-not [string]::IsNullOrWhiteSpace($virtual)) {
+        $candidates += $virtual
+    }
+    return $candidates
 }
 
 function Write-PrstLinkPanel {

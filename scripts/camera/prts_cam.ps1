@@ -59,10 +59,14 @@ function Show-Usage {
     Write-Host '    prts-cam                        # browser view' -ForegroundColor DarkGray
     Write-Host '    prts-cam view -SaveDir .\frames -Count 3' -ForegroundColor DarkGray
     Write-Host '    prts-cam web -NoBrowser -Seconds 10' -ForegroundColor DarkGray
+    Write-Host '    prts-cam web -Link tailscale      # 强制走内网穿透' -ForegroundColor DarkGray
+    Write-Host '    prts-cam web -Link lan            # 强制走局域网（默认 auto）' -ForegroundColor DarkGray
     Write-Host ''
 }
 
 function Get-NodeContext {
+    param([string]$Mode = 'auto')
+
     $values = Read-PrstIniFile -Path $configPath
     $primary = Get-PrstIniValue $values 'ssh.host' 'PRTS.local'
     $fallback = Get-PrstIniValue $values 'ssh.fallback_host' 'PRTS'
@@ -72,7 +76,7 @@ function Get-NodeContext {
     $timeout = [int](Get-PrstIniValue $values 'ssh.connect_timeout' '10')
 
     $candidates = Get-PrstLinkCandidates -RepositoryRoot $repositoryRoot -Primary $primary `
-        -Fallback $fallback
+        -Fallback $fallback -Mode $Mode
     $endpoint = Resolve-PrstEndpoint -Candidates $candidates -Port $port
     if ($null -eq $endpoint) {
         return $null
@@ -139,6 +143,16 @@ function Invoke-RemoteScript {
     }
 }
 
+# -Link lan|tailscale 显式选择链路；这个参数也会原样转发给同级脚本，
+# 这里只用于本脚本自己的地址解析。
+$linkMode = 'auto'
+for ($index = 0; $index -lt $Rest.Count - 1; $index++) {
+    if ($Rest[$index] -match '^--?[Ll]ink$') {
+        $linkMode = $Rest[$index + 1]
+        break
+    }
+}
+
 switch ($Command.ToLowerInvariant()) {
     'web' {
         $parameters = ConvertTo-ParameterTable -Arguments $Rest
@@ -151,7 +165,7 @@ switch ($Command.ToLowerInvariant()) {
         exit $LASTEXITCODE
     }
     'status' {
-        $context = Get-NodeContext
+        $context = Get-NodeContext -Mode $linkMode
         if ($null -eq $context) {
             Write-Host '  PRTS: node unreachable.' -ForegroundColor Red
             exit 2
@@ -170,7 +184,7 @@ switch ($Command.ToLowerInvariant()) {
         exit 0
     }
     'stop' {
-        $context = Get-NodeContext
+        $context = Get-NodeContext -Mode $linkMode
         if ($null -eq $context) {
             Write-Host '  PRTS: node unreachable.' -ForegroundColor Red
             exit 2

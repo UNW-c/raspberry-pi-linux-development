@@ -24,6 +24,8 @@ param(
     [string]$ConfigPath = '',
     [int]$LocalPort = 18080,
     [int]$RemotePort = 8080,
+    [ValidateSet('auto', 'lan', 'tailscale')]
+    [string]$Link = 'auto',
     [switch]$NoBrowser,
     [int]$Seconds = 0
 )
@@ -57,7 +59,7 @@ $port = [int](Get-PrstIniValue $values 'ssh.port' '22')
 $connectTimeout = [int](Get-PrstIniValue $values 'ssh.connect_timeout' '10')
 
 $candidates = Get-PrstLinkCandidates -RepositoryRoot $repositoryRoot -Primary $hostName `
-    -Fallback $fallbackHost
+    -Fallback $fallbackHost -Mode $Link
 $endpoint = Resolve-PrstEndpoint -Candidates $candidates -Port $port
 if ($null -eq $endpoint) {
     Write-Host '  PRTS is unreachable, nothing started.' -ForegroundColor Red

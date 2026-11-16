@@ -17,6 +17,8 @@
 param(
     [string]$ConfigPath = "",
     [string]$RemotePath = "",
+    [ValidateSet('auto', 'lan', 'tailscale')]
+    [string]$Link = 'auto',
     [switch]$SkipBuild,
     [switch]$SkipTests
 )
@@ -54,7 +56,7 @@ if ([string]::IsNullOrWhiteSpace($RemotePath)) {
 }
 
 $candidates = Get-PrstLinkCandidates -RepositoryRoot $repositoryRoot -Primary $hostName `
-    -Fallback $fallbackHost
+    -Fallback $fallbackHost -Mode $Link
 $endpoint = Resolve-PrstEndpoint -Candidates $candidates -Port $port
 if ($null -eq $endpoint) {
     Write-Host '  PRTS unreachable, nothing synchronised.' -ForegroundColor Red

@@ -20,6 +20,8 @@
 param(
     [string]$ConfigPath = "",
     [string]$Command = "",
+    [ValidateSet('auto', 'lan', 'tailscale')]
+    [string]$Link = 'auto',
     [switch]$NoBanner
 )
 
@@ -59,7 +61,7 @@ if (-not $NoBanner) {
 }
 
 $candidates = Get-PrstLinkCandidates -RepositoryRoot $repositoryRoot -Primary $hostName `
-    -Fallback $fallbackHost
+    -Fallback $fallbackHost -Mode $Link
 
 $endpoint = Resolve-PrstEndpoint -Candidates $candidates -Port $port
 
