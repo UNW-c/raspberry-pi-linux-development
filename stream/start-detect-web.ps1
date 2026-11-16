@@ -19,7 +19,7 @@
 #>
 [CmdletBinding()]
 param(
-    [int]$Port = 8890,
+    [int]$Port = 8891,
     [string]$Whep = 'http://127.0.0.1:8889/prts/whep',
     [string]$Python = '',
     [switch]$NoBrowser
@@ -63,6 +63,38 @@ if ($null -eq $python) {
 }
 
 $serveScript = Join-Path $scriptDirectory 'web\serve.py'
+
+# An orphaned server from an earlier run can hold the port; each shell in this
+# environment sees a different PID view, so it may not be killable. Walk up to
+# the first free port instead of failing.
+function Test-PortFree {
+    param([int]$Candidate)
+
+    $client = New-Object System.Net.Sockets.TcpClient
+    try {
+        $task = $client.ConnectAsync('127.0.0.1', $Candidate)
+        if ($task.Wait(300) -and $client.Connected) {
+            return $false
+        }
+        return $true
+    }
+    catch {
+        return $true
+    }
+    finally {
+        $client.Close()
+    }
+}
+
+$requested = $Port
+for ($attempt = 0; $attempt -lt 10; $attempt++) {
+    if (Test-PortFree -Candidate $Port) { break }
+    $Port += 1
+}
+if ($Port -ne $requested) {
+    Write-Host "  port $requested is taken, using $Port instead" -ForegroundColor Yellow
+}
+
 $url = "http://127.0.0.1:$Port/"
 
 # The page can only play what the tunnel forwards, so say it up front instead of

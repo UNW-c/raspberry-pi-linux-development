@@ -36,3 +36,6 @@ Thumbs.db
 # Logs and archives
 *.log
 *.tar.gz
+
+# ONNX Runtime Web binaries (fetched by stream/web/fetch_ort.ps1)
+stream/web/vendor/

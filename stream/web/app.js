@@ -1,9 +1,8 @@
 // PRTS detector page: play the WebRTC stream and draw detection boxes on top.
 //
-// Step 1 (this file): the overlay is driven by a placeholder box, so the only
-// thing being verified is that boxes land exactly on the picture and follow it
-// when the window is resized. Inference comes in step 2 and only replaces the
-// `detections` array.
+// The picture is the browser's own decode - the same frames the plain viewer
+// would show. Frames are handed to a worker that runs YOLOX, and only the boxes
+// come back, so inference never slows the picture down.
 
 const params = new URLSearchParams(location.search);
 // Same origin on purpose: serve.py forwards it to mediamtx, which avoids the
@@ -23,6 +22,8 @@ const status = {
 };
 
 const context = overlay.getContext('2d');
+let detections = [];
+let sourceSize = { width: 0, height: 0 };
 
 // ---------------------------------------------------------------- layout ----
 // The canvas is sized to the video's *content* box (the visible picture, not the
@@ -58,9 +59,6 @@ function layout() {
 
 // --------------------------------------------------------------- overlay ----
 // `detections` uses source pixels, the same coordinate space as the model.
-let detections = [];
-let sourceSize = { width: 0, height: 0 };
-
 function draw() {
   const ratio = window.devicePixelRatio || 1;
   context.setTransform(ratio, 0, 0, ratio, 0, 0);
@@ -84,24 +82,25 @@ function draw() {
   }
 }
 
-// A placeholder that moves on its own: if it stays glued to the picture while
-// the window resizes, the coordinate mapping is right.
-function placeholder(now) {
-  const width = sourceSize.width;
-  const height = sourceSize.height;
-  if (!width) {
-    return [];
+// ---------------------------------------------------------------- worker ----
+const worker = new Worker('./worker.js', { type: 'module' });
+
+worker.onmessage = (event) => {
+  const message = event.data;
+  if (message.type === 'result') {
+    detections = message.detections;
+    status.detect.textContent = `${message.processed} @ ${message.fps.toFixed(1)} fps`;
+    draw();
+  } else if (message.type === 'status') {
+    status.note.textContent = message.text;
+  } else if (message.type === 'error') {
+    status.note.textContent = `detector: ${message.text}`;
   }
-  const span = width * 0.5;
-  const x = (Math.sin(now / 1600) * 0.5 + 0.5) * (width - span);
-  const y = (Math.sin(now / 2300) * 0.5 + 0.5) * (height * 0.5);
-  return [{ label: 'placeholder', score: 0.99, box: [x, y, span, height * 0.3] }];
-}
+};
 
 // ------------------------------------------------------------------ WHEP ----
 async function connect() {
   const peer = new RTCPeerConnection({ iceServers: [] });
-
   peer.addTransceiver('video', { direction: 'recvonly' });
 
   peer.ontrack = (event) => {
@@ -123,8 +122,8 @@ async function connect() {
   const offer = await peer.createOffer();
   await peer.setLocalDescription(offer);
 
-  // Wait for the ICE gathering to settle so the offer already carries the
-  // candidates; mediamtx accepts a non-trickle WHEP offer.
+  // Wait for ICE gathering so the offer already carries its candidates;
+  // mediamtx accepts a non-trickle WHEP offer.
   await new Promise((resolve) => {
     if (peer.iceGatheringState === 'complete') {
       resolve();
@@ -145,13 +144,10 @@ async function connect() {
     headers: { 'Content-Type': 'application/sdp' },
     body: peer.localDescription.sdp,
   });
-
   if (!response.ok) {
     throw new Error(`WHEP ${response.status} ${response.statusText}`);
   }
-
-  const answer = await response.text();
-  await peer.setRemoteDescription({ type: 'answer', sdp: answer });
+  await peer.setRemoteDescription({ type: 'answer', sdp: await response.text() });
   return peer;
 }
 
@@ -172,43 +168,61 @@ function countFrame() {
   status.frames.textContent = String(frameCount);
 }
 
-async function waitForStream(timeout = 8000) {
-  const deadline = performance.now() + timeout;
-  while (performance.now() < deadline) {
-    if (video.srcObject && video.srcObject.getVideoTracks().length > 0) {
-      return video.srcObject;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error('no video track arrived');
+function waitForStream(timeout = 8000) {
+  return new Promise((resolve, reject) => {
+    const deadline = performance.now() + timeout;
+    const poll = () => {
+      if (video.srcObject && video.srcObject.getVideoTracks().length > 0) {
+        resolve(video.srcObject);
+        return;
+      }
+      if (performance.now() > deadline) {
+        reject(new Error('no video track arrived'));
+        return;
+      }
+      setTimeout(poll, 100);
+    };
+    poll();
+  });
 }
 
-// Newest decoded frame straight from the WebRTC pipeline. Chromium only; the
-// fallback uses requestVideoFrameCallback, which still counts every frame.
-async function watchFrames() {
+// Newest decoded frame straight from the WebRTC pipeline, handed to the worker
+// without a copy. Chromium only; the fallback builds a VideoFrame from the
+// element, which costs one extra copy per frame.
+async function pumpFrames() {
   const stream = await waitForStream();
 
-  if (!('MediaStreamTrackProcessor' in window)) {
-    status.note.textContent = 'MediaStreamTrackProcessor missing: using the fallback';
-    const tick = () => {
+  if ('MediaStreamTrackProcessor' in window) {
+    const processor = new MediaStreamTrackProcessor({ track: stream.getVideoTracks()[0] });
+    const reader = processor.readable.getReader();
+    for (;;) {
+      const { value: frame, done } = await reader.read();
+      if (done) {
+        break;
+      }
       countFrame();
-      video.requestVideoFrameCallback(tick);
-    };
-    video.requestVideoFrameCallback(tick);
+      worker.postMessage({ type: 'frame', frame }, [frame]);
+    }
     return;
   }
 
-  const track = stream.getVideoTracks()[0];
-  const processor = new MediaStreamTrackProcessor({ track });
-  const reader = processor.readable.getReader();
-  for (;;) {
-    const { value: frame, done } = await reader.read();
-    if (done) {
-      break;
+  status.note.textContent = 'no MediaStreamTrackProcessor: frames go through the main thread';
+  const tick = () => {
+    if (video.readyState >= 2) {
+      countFrame();
+      let frame = null;
+      try {
+        frame = new VideoFrame(video);
+      } catch (error) {
+        status.note.textContent = `VideoFrame failed: ${error.message}`;
+      }
+      if (frame) {
+        worker.postMessage({ type: 'frame', frame }, [frame]);
+      }
     }
-    countFrame();
-    frame.close();
-  }
+    video.requestVideoFrameCallback(tick);
+  };
+  video.requestVideoFrameCallback(tick);
 }
 
 // ------------------------------------------------------------------ boot ----
@@ -216,6 +230,7 @@ video.addEventListener('loadedmetadata', () => {
   sourceSize = { width: video.videoWidth, height: video.videoHeight };
   status.size.textContent = `${sourceSize.width}x${sourceSize.height}`;
   layout();
+  draw();
 });
 
 new ResizeObserver(() => {
@@ -223,17 +238,10 @@ new ResizeObserver(() => {
   draw();
 }).observe(stage);
 
-// Placeholder loop: replace `placeholder(now)` with the worker results later.
-function tick(now) {
-  detections = placeholder(now);
-  status.detect.textContent = 'placeholder';
-  draw();
-  requestAnimationFrame(tick);
-}
-requestAnimationFrame(tick);
+worker.postMessage({ type: 'init' });
 
 connect()
-  .then(() => watchFrames())
+  .then(() => pumpFrames())
   .catch((error) => {
     status.whep.textContent = 'failed';
     status.note.textContent = `${error.message} - is start-stream running?`;

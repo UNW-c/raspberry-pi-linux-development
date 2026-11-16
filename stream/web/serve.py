@@ -19,6 +19,8 @@ import urllib.request
 from functools import partial
 from pathlib import Path
 
+MODELS_DIR = Path(__file__).resolve().parents[2] / "models"
+
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     server_version = "prts-detect/1.0"
@@ -27,13 +29,30 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     extensions_map = {
         **http.server.SimpleHTTPRequestHandler.extensions_map,
         ".js": "text/javascript",
+        ".mjs": "text/javascript",
         ".wasm": "application/wasm",
         ".onnx": "application/octet-stream",
     }
 
     def end_headers(self) -> None:
         self.send_header("Cache-Control", "no-store")
+        # ONNX Runtime Web only gets SharedArrayBuffer - and therefore worker
+        # threads - on a cross-origin isolated page.
+        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+        self.send_header("Cross-Origin-Embedder-Policy", "require-corp")
         super().end_headers()
+
+    def translate_path(self, path: str) -> str:
+        # /models/... comes from the repository's models/ directory, which sits
+        # outside this web root.
+        clean = path.split("?")[0].split("#")[0]
+        if clean.startswith("/models/"):
+            name = clean[len("/models/"):]
+            candidate = (MODELS_DIR / name).resolve()
+            if MODELS_DIR.resolve() in candidate.parents or candidate.parent == MODELS_DIR.resolve():
+                return str(candidate)
+            return str(MODELS_DIR)
+        return super().translate_path(path)
 
     def do_POST(self) -> None:  # noqa: N802 - http.server naming
         if self.path.split("?")[0] != "/whep":
