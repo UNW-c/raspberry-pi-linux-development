@@ -25,6 +25,7 @@ import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlparse
 
 import cv2
 import numpy as np
@@ -199,20 +200,19 @@ class FrameSource:
 class RtspSource:
     """Blocking reader for the RTSP stream, with reconnect on a dead tunnel."""
 
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, transport: str = "udp") -> None:
         self.url = url
-        # OpenCV's ffmpeg backend uses UDP for RTSP by default, and UDP does not
-        # survive an SSH tunnel - it just hangs until the timeout. run_detect.ps1
-        # also sets this before the process starts, which is the only way that
-        # always takes effect.
-        os.environ.setdefault(
-            "OPENCV_FFMPEG_CAPTURE_OPTIONS",
-            # TCP because UDP does not cross an SSH tunnel; nobuffer drops the
-            # demuxer queue that would put the picture behind the browser.
-            # (max_delay/low_delay were tried and trip an FFmpeg assertion.)
-            "rtsp_transport;tcp|fflags;nobuffer|stimeout;5000000",
+        self.transport = transport
+        # rtsp_transport is a ffmpeg demuxer option and only reachable through
+        # this variable; it has to be set before the capture is created.
+        #   udp  - media over RTP/UDP, the same transport the browser uses
+        #          through WebRTC, so both pictures are equally close to live
+        #   tcp  - needed when the stream comes through an SSH tunnel
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
+            f"rtsp_transport;{transport}|fflags;nobuffer|stimeout;5000000"
         )
-        print(f"connecting to {url} (the first open can take ~10 s through the tunnel)",
+        print(f"connecting to {url} over rtsp/{transport}"
+              + (" (the first open can take ~10 s)" if transport == "tcp" else ""),
               flush=True)
         self.capture = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
         if not self.capture.isOpened():
@@ -236,7 +236,6 @@ class RtspSource:
             self.capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         except cv2.error:
             self.capture = cv2.VideoCapture()
-
     def read(self) -> np.ndarray | None:
         # Never let an exception escape: a dead tunnel makes OpenCV throw, and
         # that would end the reader thread and silently freeze the picture.
@@ -345,17 +344,27 @@ class DetectionWorker(threading.Thread):
             return list(self.results), self.shape, self.processed, self.hits, self.fps
 
 
+def resolve_transport(url: str, requested: str) -> str:
+    """UDP for a direct connection, TCP when the stream comes through a tunnel."""
+    if requested in ("udp", "tcp"):
+        return requested
+    host = (urlparse(url).hostname or "").lower()
+    return "tcp" if host in ("127.0.0.1", "localhost", "::1") else "udp"
+
+
 def open_source(args):
     """Picks the frame source: RTSP by default, the old snapshot as a fallback."""
     if args.source == "snapshot":
         return FrameSource(args.url), f"snapshot {args.url.rstrip('/')}/snapshot"
 
+    transport = resolve_transport(args.rtsp, args.transport)
+    label = f"rtsp {args.rtsp} ({transport})"
+
     if args.source == "rtsp":
-        return RtspSource(args.rtsp), f"rtsp {args.rtsp}"
+        return RtspSource(args.rtsp, transport), label
 
     try:
-        source = RtspSource(args.rtsp)
-        return source, f"rtsp {args.rtsp}"
+        return RtspSource(args.rtsp, transport), label
     except RuntimeError as error:
         print(f"rtsp unavailable ({error}), falling back to the snapshot path", flush=True)
         return FrameSource(args.url), f"snapshot {args.url.rstrip('/')}/snapshot"
@@ -485,6 +494,9 @@ def main() -> int:
     parser.add_argument("--rtsp", default="",
                         help="RTSP url; default is what start-stream.ps1 recorded, "
                              "else rtsp://127.0.0.1:8554/prts (the tunnel)")
+    parser.add_argument("--transport", choices=["auto", "udp", "tcp"], default="auto",
+                        help="RTP transport; auto = udp when connecting directly, tcp "
+                             "through a tunnel")
     parser.add_argument("--url", default="http://127.0.0.1:18080",
                         help="camera web base url used by --source snapshot")
     parser.add_argument("--model", default="models/nailong_v2.6_tiny.onnx")

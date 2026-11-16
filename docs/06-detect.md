@@ -71,8 +71,19 @@ powershell -ExecutionPolicy Bypass -File scripts\detect\run_detect.ps1 -Python C
 
 ## 画面来源
 
-默认读 **RTSP 图传**（`rtsp://127.0.0.1:8554/prts`），也就是 `stream\start-stream.bat`
-开的那条隧道，拿到的是 640×480 原始画面。所以顺序是：先 `start-stream`，再跑检测。
+默认读 **RTSP 图传**（`rtsp://<节点地址>:8554/prts`），也就是 `stream\start-stream.bat`
+开的那条流，拿到的是 640×480 原始画面。所以顺序是：先 `start-stream`，再跑检测。
+
+识别完全在电脑上跑，**不经过 ssh**。之前走隧道只是因为那时 RTSP 只监听
+`127.0.0.1`；现在 mediamtx 监听所有网口，识别直接连节点：
+
+| 连线 | 媒体传输 | 说明 |
+| --- | --- | --- |
+| 直连节点（默认） | **UDP** | 和浏览器 WebRTC 同一种承载，延迟同一档 |
+| 走 ssh 隧道 | TCP | UDP 过不了隧道；`--rtsp` 指到 `127.0.0.1` 时自动切换 |
+
+地址由 `start-stream.ps1` 写进 `.tmp-ops/stream-rtsp.txt`，识别脚本默认读它；
+`--rtsp` 可覆盖，`--transport udp|tcp` 可强制传输方式。
 
 | `--source` | 取帧方式 | 依赖 |
 | --- | --- | --- |
