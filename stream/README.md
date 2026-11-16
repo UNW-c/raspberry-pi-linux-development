@@ -120,6 +120,20 @@ stream/
     └── play-stream.ps1       可选：ffplay 拉 RTSP 播放
 ```
 
+## 和识别的关系
+
+奶龙识别（`scripts\detect\detect.bat`）默认就吃这条流：`--source rtsp`
+读 `rtsp://127.0.0.1:8554/prts`，拿到 640×480 原图，比旧的 160×120 快照准得多。
+所以顺序是**先开图传，再开识别**：
+
+```powershell
+stream\start-stream.bat                 # 隧道 + 推流
+scripts\detect\detect.bat               # 另开一个窗口，自动读 RTSP
+```
+
+两条链路在相机上互斥（`/dev/video0` 只能一个进程占用），`prts-stream start`
+会停掉 `prts-camera`，所以旧的 `prts-cam` 网页和识别不能同时用。
+
 ## 踩过的坑
 
 1. **HLS 慢是分片机制决定的**：2 秒分片 + 播放器预缓冲，3 秒延迟里九成在这里，

@@ -50,10 +50,21 @@ powershell -ExecutionPolicy Bypass -File scripts\detect\run_detect.ps1 -Python C
 ... run_detect.ps1 --no-window --count 30       # 只跑 30 帧，只打日志
 ... run_detect.ps1 --http 18081                 # 另外开一个带框的网页流
 ... run_detect.ps1 --score 0.5 --scale 6        # 提高阈值、放大窗口
+... run_detect.ps1 --source snapshot            # 退回旧相机页面取帧
 ```
 
-默认从 `http://127.0.0.1:18080/snapshot` 取帧，也就是 `prts-cam` 开的那条隧道；
-所以先让相机网页能打开，再跑检测。
+## 画面来源
+
+默认读 **RTSP 图传**（`rtsp://127.0.0.1:8554/prts`），也就是 `stream\start-stream.bat`
+开的那条隧道，拿到的是 640×480 原始画面。所以顺序是：先 `start-stream`，再跑检测。
+
+| `--source` | 取帧方式 | 依赖 |
+| --- | --- | --- |
+| `rtsp`（默认） | RTSP 流，640×480 | `stream\start-stream.bat` |
+| `snapshot` | `http://127.0.0.1:18080/snapshot`，160×120 | `prts-cam`（旧 MQTT 链路） |
+| `auto` | 先试 RTSP，失败退回 snapshot | 都行 |
+
+两条链路在相机上是互斥的（`/dev/video0` 只能被一个进程占用），所以不要指望同时开。
 
 ## 踩过的坑
 
@@ -61,16 +72,25 @@ powershell -ExecutionPolicy Bypass -File scripts\detect\run_detect.ps1 -Python C
    时目标置信度从 0.99 掉到 0.14，等于完全检测不到。
 2. **urllib 会走系统代理**。Windows 上 Python 从注册表读代理设置，请求
    `127.0.0.1` 也会被转发出去，表现为一直超时。`ProxyHandler({})` 关掉即可。
-3. **取最新帧而不是排队**：轮询 `/snapshot`，同一帧重复就直接跳过，慢的时候
-   自动降频，不会越拖越久。
+3. **RTSP 必须用 TCP**。OpenCV 的 ffmpeg 后端默认用 UDP，UDP 过不了 SSH 隧道，
+   表现是卡 30 秒后报 `Stream timeout`。要用环境变量指定，而且必须在 Python
+   启动前就设好：
+   ```
+   OPENCV_FFMPEG_CAPTURE_OPTIONS=rtsp_transport;tcp|stimeout;5000000
+   ```
+   `run_detect.ps1` 已经替你设了。
+4. **隧道关掉后不能崩**。读帧线程里必须捕 `cv2.error` 并重连，否则线程静默死掉、
+   画面永远停住。现在断了会打印 `stream lost, reconnecting ...` 并每 3 秒重试。
 
-## 实测（本机，2026-11-14）
+## 实测（本机，2026-11-16）
 
 | 项目 | 数值 |
 | --- | --- |
 | 模型加载 | 约 0.3 s |
 | 推理 | 77 ms / 帧（8 线程） |
-| 整体 | 受链路限制，好链路下约 5–8 fps，链路差时降到 1 fps |
+| 读 RTSP（含首次连接约 12 s） | 640×480，30 fps 源 |
+| 整体 | **约 10 fps**（推理为瓶颈，不是链路） |
 | 示例图（`images/examples.png`） | `long` 0.91、`anime` 0.88 |
 
-整体帧率的上限不是模型，是相机帧过来的速度：检测要等下一条 `/snapshot`。
+换成 RTSP 之后帧率上限从「链路能送多少张 160×120」变成「模型能算多快」，
+所以稳定在 10 fps 左右，与画面复杂度和链路抖动无关。

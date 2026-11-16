@@ -141,11 +141,18 @@ if (-not (Test-Path -LiteralPath $model)) {
 }
 
 Push-Location $repositoryRoot
+# The detector reads the RTSP stream; OpenCV's ffmpeg backend only honours this
+# when it is in the environment before Python starts.
+$previousOptions = $env:OPENCV_FFMPEG_CAPTURE_OPTIONS
+if ([string]::IsNullOrWhiteSpace($previousOptions)) {
+    $env:OPENCV_FFMPEG_CAPTURE_OPTIONS = 'rtsp_transport;tcp|stimeout;5000000'
+}
 try {
     & $python -u (Join-Path $scriptDirectory 'detect_nailong.py') @Arguments
     $exitCode = $LASTEXITCODE
 }
 finally {
+    $env:OPENCV_FFMPEG_CAPTURE_OPTIONS = $previousOptions
     Pop-Location
 }
 exit $exitCode

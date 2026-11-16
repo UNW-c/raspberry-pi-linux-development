@@ -1,14 +1,16 @@
 """Live 奶龙 detection on the desktop.
 
-The node pushes 160x120 JPEG frames through the SSH forward; this script pulls
-the newest one, runs YOLOX (the model from nkxingxh/NailongDetection) with
-onnxruntime and draws the boxes. Inference runs here on purpose: the Pi 3B has
-about 900 MB of RAM and no vector unit worth the name, so a detector on the node
-would starve the camera pipeline it is supposed to watch.
+The node serves the camera as an RTSP stream (V4L2 -> FFmpeg -> mediamtx); this
+script pulls the newest frame from it and runs YOLOX (the model from
+nkxingxh/NailongDetection) with OpenCV's DNN module, drawing the boxes.
+Inference runs here on purpose: the Pi 3B has about 900 MB of RAM and no vector
+unit worth the name, so a detector on the node would starve the camera pipeline
+it is supposed to watch.
 
     python detect_nailong.py                       # window with boxes
     python detect_nailong.py --no-window           # console only
     python detect_nailong.py --http 18081          # annotated stream for the browser
+    python detect_nailong.py --source snapshot     # old camera page (no stream running)
 """
 
 from __future__ import annotations
@@ -193,6 +195,107 @@ class FrameSource:
         return image
 
 
+class RtspSource:
+    """Reads the newest frame from the RTSP stream.
+
+    A background thread keeps draining the stream, so the frame handed to the
+    detector is the one from this instant instead of one ffmpeg buffered a second
+    ago. The stream carries the native 640x480 picture, which detects better than
+    the downscaled snapshot the old path served.
+    """
+
+    def __init__(self, url: str) -> None:
+        self.url = url
+        # OpenCV's ffmpeg backend uses UDP for RTSP by default, and UDP does not
+        # survive an SSH tunnel - it just hangs until the timeout. run_detect.ps1
+        # also sets this before the process starts, which is the only way that
+        # always takes effect.
+        os.environ.setdefault(
+            "OPENCV_FFMPEG_CAPTURE_OPTIONS",
+            "rtsp_transport;tcp|stimeout;5000000",
+        )
+        print(f"connecting to {url} (the first open can take ~10 s through the tunnel)",
+              flush=True)
+        self.capture = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
+        if not self.capture.isOpened():
+            raise RuntimeError(f"cannot open {url}")
+        self.capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        self.lock = threading.Lock()
+        self.latest = None
+        self.running = True
+        self.misses = 0
+        self.lastReconnect = 0.0
+        self.thread = threading.Thread(target=self._pump, daemon=True)
+        self.thread.start()
+
+    def _reconnect(self) -> None:
+        """Reopens the stream after the tunnel or the publisher went away."""
+        if time.monotonic() - self.lastReconnect < 3.0:
+            return
+        self.lastReconnect = time.monotonic()
+        print(f"stream lost, reconnecting to {self.url} ...", flush=True)
+        try:
+            self.capture.release()
+        except cv2.error:
+            pass
+        try:
+            self.capture = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)
+            self.capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        except cv2.error:
+            self.capture = cv2.VideoCapture()
+
+    def _pump(self) -> None:
+        # Never let an exception escape: a dead tunnel makes OpenCV throw, and
+        # that would end the thread and silently freeze the picture.
+        while self.running:
+            try:
+                ok, frame = self.capture.read()
+            except cv2.error:
+                ok, frame = False, None
+            if not ok or frame is None:
+                time.sleep(0.2)
+                self._reconnect()
+                continue
+            with self.lock:
+                self.latest = frame
+
+    def read(self) -> np.ndarray | None:
+        with self.lock:
+            frame = self.latest
+            self.latest = None
+        if frame is None:
+            self.misses += 1
+            if self.misses in (40, 200):
+                print(
+                    f"no frames from {self.url} - start the stream first "
+                    f"(stream\\start-stream.bat)",
+                    flush=True,
+                )
+            return None
+        self.misses = 0
+        return frame
+
+    def close(self) -> None:
+        self.running = False
+        self.capture.release()
+
+
+def open_source(args):
+    """Picks the frame source: RTSP by default, the old snapshot as a fallback."""
+    if args.source == "snapshot":
+        return FrameSource(args.url), f"snapshot {args.url.rstrip('/')}/snapshot"
+
+    if args.source == "rtsp":
+        return RtspSource(args.rtsp), f"rtsp {args.rtsp}"
+
+    try:
+        source = RtspSource(args.rtsp)
+        return source, f"rtsp {args.rtsp}"
+    except RuntimeError as error:
+        print(f"rtsp unavailable ({error}), falling back to the snapshot path", flush=True)
+        return FrameSource(args.url), f"snapshot {args.url.rstrip('/')}/snapshot"
+
+
 class AnnotatedStream:
     """Serves the annotated picture as MJPEG so the browser can watch it."""
 
@@ -273,7 +376,13 @@ def draw(image: np.ndarray, detections: list[dict], fps: float, info: str) -> np
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="奶龙 detection on desktop frames")
-    parser.add_argument("--url", default="http://127.0.0.1:18080", help="camera web base url")
+    parser.add_argument("--source", choices=["rtsp", "snapshot", "auto"], default="rtsp",
+                        help="rtsp = the ffmpeg stream (default), snapshot = the old camera "
+                             "page, auto = rtsp with a snapshot fallback")
+    parser.add_argument("--rtsp", default="rtsp://127.0.0.1:8554/prts",
+                        help="RTSP url opened by --source rtsp")
+    parser.add_argument("--url", default="http://127.0.0.1:18080",
+                        help="camera web base url used by --source snapshot")
     parser.add_argument("--model", default="models/nailong_v2.6_tiny.onnx")
     parser.add_argument("--labels", default="models/labels.txt")
     parser.add_argument("--size", type=int, default=416)
@@ -294,13 +403,17 @@ def main() -> int:
     threads = args.threads or max(1, (os.cpu_count() or 4))
     labels = load_labels(args.labels)
     detector = Detector(args.model, labels, args.size, args.score, args.nms, threads, args.backend)
-    source = FrameSource(args.url)
+    try:
+        source, source_label = open_source(args)
+    except RuntimeError as error:
+        print(f"no frame source: {error}", flush=True)
+        return 4
     stream = AnnotatedStream(args.http) if args.http else None
     if stream is not None:
         stream.start()
         print(f"annotated stream: http://127.0.0.1:{args.http}/", flush=True)
     print(
-        f"model {args.model}  backend {detector.backend}  "
+        f"model {args.model}  backend {detector.backend}  source {source_label}  "
         f"classes {', '.join(labels)}  threads {threads}",
         flush=True,
     )
@@ -317,7 +430,7 @@ def main() -> int:
             if time.monotonic() - started > args.idle_timeout and processed == 0:
                 print(
                     f"no frame within {args.idle_timeout:.0f}s, giving up - "
-                    f"is the camera page open at {args.url} ?",
+                    f"source was {source_label}",
                     flush=True,
                 )
                 if stream is not None and stream.server is not None:
@@ -362,6 +475,7 @@ def main() -> int:
 
     if not args.no_window:
         cv2.destroyAllWindows()
+    source.close()
     if stream is not None and stream.server is not None:
         stream.server.shutdown()
     print(f"stopped after {processed} frames", flush=True)

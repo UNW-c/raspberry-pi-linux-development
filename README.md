@@ -195,15 +195,18 @@ stream\start-stream.bat
 ## 奶龙检测
 
 电脑端跑 YOLOX（[nkxingxh/NailongDetection](https://github.com/nkxingxh/NailongDetection)，
-ONNX，AGPL-3.0），从相机页面取帧、画框，树莓派不参与推理：
+ONNX，AGPL-3.0），从**图传的 RTSP 流**取帧（640×480）、画框，树莓派不参与推理：
 
 ```powershell
 scripts\detect\detect.bat                 # 弹窗显示带框画面
 scripts\detect\detect.bat --http 18081    # 或者开个带框的网页流
+scripts\detect\detect.bat --source snapshot   # 退回旧相机页面（160×120）
 ```
 
 依赖只有 opencv + numpy（OpenCV 自带 ONNX 导入器），脚本会复用机器上已有的
 Python 环境。模型下载到 `models/`，不入库。细节见 [docs/06-detect.md](docs/06-detect.md)。
+
+先开图传再开识别；两条链路在相机上互斥。稳定在约 10 fps，瓶颈是推理而不是链路。
 
 ## 私有设备地址
 
