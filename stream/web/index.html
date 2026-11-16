@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PRTS / DETECT</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #000; color: #f0f0f0;
+    font: 14px/1.7 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  .page { max-width: 1000px; margin: 0 auto; padding: 24px 26px 18px; }
+  header { display: flex; align-items: baseline; gap: 14px; }
+  .bar { color: #bfbfbf; font-size: 17px; }
+  .name { font-weight: 700; letter-spacing: .12em; font-size: 17px; }
+  .tag { margin-left: auto; color: #8a8a8a; letter-spacing: .18em; font-size: 12px; }
+  .rule { height: 1px; background: #2e2e2e; margin: 12px 0 16px; }
+
+  /* The canvas sits exactly on top of the video content box, so boxes drawn in
+     source pixels land on the right spot regardless of the window size. */
+  .stage { position: relative; width: 100%; background: #0a0a0a; border: 1px solid #2e2e2e; }
+  .stage video { display: block; width: 100%; height: auto; }
+  .stage canvas { position: absolute; pointer-events: none; }
+
+  footer { display: flex; gap: 22px; flex-wrap: wrap; color: #8a8a8a; margin-top: 14px; font-size: 13px; }
+  footer b { color: #bfbfbf; font-weight: 400; }
+  .warn { color: #c9a227; }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <span class="bar">&#9612;</span>
+    <span class="name">PRTS</span>
+    <span class="tag">DETECT</span>
+  </header>
+  <div class="rule"></div>
+
+  <div class="stage" id="stage">
+    <video id="video" autoplay muted playsinline></video>
+    <canvas id="overlay"></canvas>
+  </div>
+
+  <div class="rule"></div>
+  <footer>
+    <span>WHEP <b id="whep">connecting</b></span>
+    <span>VIDEO <b id="size">-</b></span>
+    <span>FRAMES <b id="frames">0</b></span>
+    <span>FPS <b id="fps">0</b></span>
+    <span>DETECT <b id="detect">-</b></span>
+    <span id="note" class="warn"></span>
+  </footer>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
