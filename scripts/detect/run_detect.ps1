@@ -145,7 +145,9 @@ Push-Location $repositoryRoot
 # when it is in the environment before Python starts.
 $previousOptions = $env:OPENCV_FFMPEG_CAPTURE_OPTIONS
 if ([string]::IsNullOrWhiteSpace($previousOptions)) {
-    $env:OPENCV_FFMPEG_CAPTURE_OPTIONS = 'rtsp_transport;tcp|stimeout;5000000'
+    # TCP for the tunnel, and no demuxer buffering so the picture is current.
+    $env:OPENCV_FFMPEG_CAPTURE_OPTIONS =
+        'rtsp_transport;tcp|fflags;nobuffer|stimeout;5000000'
 }
 try {
     & $python -u (Join-Path $scriptDirectory 'detect_nailong.py') @Arguments

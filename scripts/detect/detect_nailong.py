@@ -24,6 +24,7 @@ import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -206,7 +207,10 @@ class RtspSource:
         # always takes effect.
         os.environ.setdefault(
             "OPENCV_FFMPEG_CAPTURE_OPTIONS",
-            "rtsp_transport;tcp|stimeout;5000000",
+            # TCP because UDP does not cross an SSH tunnel; nobuffer drops the
+            # demuxer queue that would put the picture behind the browser.
+            # (max_delay/low_delay were tried and trip an FFmpeg assertion.)
+            "rtsp_transport;tcp|fflags;nobuffer|stimeout;5000000",
         )
         print(f"connecting to {url} (the first open can take ~10 s through the tunnel)",
               flush=True)
@@ -294,7 +298,10 @@ class LatestFrame:
         return self.latest
 
     def close(self) -> None:
+        # Stop the reader before releasing the capture: releasing while a decode
+        # is in flight trips an FFmpeg frame-threading assertion on exit.
         self.running = False
+        self.thread.join(timeout=2.0)
         self.source.close()
 
 
@@ -352,6 +359,25 @@ def open_source(args):
     except RuntimeError as error:
         print(f"rtsp unavailable ({error}), falling back to the snapshot path", flush=True)
         return FrameSource(args.url), f"snapshot {args.url.rstrip('/')}/snapshot"
+
+
+def resolve_rtsp_url(explicit: str) -> str:
+    """Finds the stream address: the flag, then what start-stream.ps1 recorded.
+
+    start-stream.ps1 writes the node's direct address to .tmp-ops/stream-rtsp.txt.
+    Using that instead of the tunnel puts the detector on the same path as the
+    browser (no SSH hop, no extra buffering), so both pictures stay in step.
+    """
+    if explicit:
+        return explicit
+    state = Path(__file__).resolve().parents[2] / ".tmp-ops" / "stream-rtsp.txt"
+    try:
+        url = state.read_text(encoding="utf-8").strip()
+        if url:
+            return url
+    except OSError:
+        pass
+    return "rtsp://127.0.0.1:8554/prts"
 
 
 class AnnotatedStream:
@@ -456,8 +482,9 @@ def main() -> int:
     parser.add_argument("--source", choices=["rtsp", "snapshot", "auto"], default="rtsp",
                         help="rtsp = the ffmpeg stream (default), snapshot = the old camera "
                              "page, auto = rtsp with a snapshot fallback")
-    parser.add_argument("--rtsp", default="rtsp://127.0.0.1:8554/prts",
-                        help="RTSP url opened by --source rtsp")
+    parser.add_argument("--rtsp", default="",
+                        help="RTSP url; default is what start-stream.ps1 recorded, "
+                             "else rtsp://127.0.0.1:8554/prts (the tunnel)")
     parser.add_argument("--url", default="http://127.0.0.1:18080",
                         help="camera web base url used by --source snapshot")
     parser.add_argument("--model", default="models/nailong_v2.6_tiny.onnx")
@@ -481,6 +508,7 @@ def main() -> int:
     args = parser.parse_args()
 
     threads = args.threads or max(1, (os.cpu_count() or 4))
+    args.rtsp = resolve_rtsp_url(args.rtsp)
     labels = load_labels(args.labels)
     detector = Detector(args.model, labels, args.size, args.score, args.nms, threads, args.backend)
     try:

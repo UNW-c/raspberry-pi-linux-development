@@ -110,6 +110,15 @@ function Test-WebrtcPage {
 Write-PrstLinkPanel -Node "$user@$($endpoint.Name) ($($endpoint.Address))" -State 'STREAM' `
     -Detail "hls $HlsPort, rtsp $RtspPort"
 
+# The detector reads the stream directly from the node instead of through the
+# tunnel: same path as WebRTC, so both pictures stay at the same distance from
+# the camera. Handing the address over through a file keeps the two scripts
+# independent.
+$stateDirectory = Join-Path $repositoryRoot '.tmp-ops'
+New-Item -ItemType Directory -Force -Path $stateDirectory | Out-Null
+Set-Content -LiteralPath (Join-Path $stateDirectory 'stream-rtsp.txt') `
+    -Value "rtsp://$($endpoint.Address):$RtspPort/prts" -Encoding ASCII
+
 $passwordState = New-PrstPasswordEnvironment -Password $password
 $tunnel = $null
 

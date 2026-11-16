@@ -60,7 +60,7 @@ write_config() {
     mkdir -p "$RUN_DIR"
     cat > "$CONFIG" <<EOF
 logLevel: info
-rtspAddress: 127.0.0.1:$RTSP_PORT
+rtspAddress: :$RTSP_PORT
 hlsAddress: 127.0.0.1:$HLS_PORT
 hlsVariant: lowLatency
 hlsSegmentDuration: 1s
