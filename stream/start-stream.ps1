@@ -72,6 +72,13 @@ if ($null -eq $endpoint) {
     exit 2
 }
 
+# The node always listens on these; the parameters above only shift the local
+# side, so a second tunnel (say, over Tailscale) does not fight for the same
+# local ports.
+$NodeWebrtcPort = 8889
+$NodeHlsPort = 8888
+$NodeRtspPort = 8554
+
 $target = "$user@$($endpoint.Address)"
 $sshOptions = @(
     '-o', 'StrictHostKeyChecking=accept-new',
@@ -117,7 +124,7 @@ Write-PrstLinkPanel -Node "$user@$($endpoint.Name) ($($endpoint.Address))" -Stat
 $stateDirectory = Join-Path $repositoryRoot '.tmp-ops'
 New-Item -ItemType Directory -Force -Path $stateDirectory | Out-Null
 Set-Content -LiteralPath (Join-Path $stateDirectory 'stream-rtsp.txt') `
-    -Value "rtsp://$($endpoint.Address):$RtspPort/prts" -Encoding ASCII
+    -Value "rtsp://$($endpoint.Address):$NodeRtspPort/prts" -Encoding ASCII
 
 $passwordState = New-PrstPasswordEnvironment -Password $password
 $tunnel = $null
@@ -148,13 +155,13 @@ try {
             }
         }
 
-        Write-Host "  opening ssh tunnel webrtc $WebrtcPort, hls $HlsPort, rtsp $RtspPort ..."
+        Write-Host "  opening ssh tunnel webrtc $WebrtcPort->$NodeWebrtcPort, hls $HlsPort->$NodeHlsPort, rtsp $RtspPort->$NodeRtspPort ..."
         $arguments = @('-N') + $sshOptions + @(
             '-o', 'ExitOnForwardFailure=yes',
             '-o', 'ServerAliveInterval=20',
-            '-L', "127.0.0.1:$WebrtcPort`:127.0.0.1:$WebrtcPort",
-            '-L', "127.0.0.1:$HlsPort`:127.0.0.1:$HlsPort",
-            '-L', "127.0.0.1:$RtspPort`:127.0.0.1:$RtspPort",
+            '-L', "127.0.0.1:$WebrtcPort`:127.0.0.1:$NodeWebrtcPort",
+            '-L', "127.0.0.1:$HlsPort`:127.0.0.1:$NodeHlsPort",
+            '-L', "127.0.0.1:$RtspPort`:127.0.0.1:$NodeRtspPort",
             $target
         )
         $tunnelLog = Join-Path $env:TEMP ("prts-stream-" + [guid]::NewGuid().ToString('N') + ".log")
