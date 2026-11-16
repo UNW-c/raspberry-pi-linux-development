@@ -1,7 +1,7 @@
 # 图传（V4L2 + FFmpeg + RTSP）
 
-树莓派用 V4L2 直接取相机，FFmpeg 硬件编码成 H.264，经 RTSP 送到电脑。
-和 `prts-camera` 那套「JPEG 塞进 MQTT」是并存的独立项目，互不影响。
+树莓派用 V4L2 直接取相机，FFmpeg 硬件编码成 H.264，经 RTSP 送到电脑；
+浏览器用 WebRTC 收，识别在页面里并行跑。MQTT 只负责遥测，不再传画面。
 
 ## 快速开始
 
@@ -11,21 +11,44 @@
 stream\start-stream.bat
 ```
 
-它会做四件事（可以重复执行，已启动的会跳过）：
+会先问走哪条链路（会显示各自解析到的地址和是否可用）：
+
+```
+  PRTS  >  LINK
+  ----------------------------------------------
+  1) 局域网直连       192.168.150.239  可用
+  2) 内网穿透        100.88.115.39    可用
+  3) 自动            局域网优先
+  0) 退出
+```
+
+选完它会：
 
 1. ssh 到节点执行 `~/.local/bin/prts-stream start`
-2. 开 SSH 隧道：`8889`（WebRTC 信令）、`8888`（HLS）、`8554`（RTSP）
-3. 打开浏览器 `http://127.0.0.1:8889/prts`
-4. 保持隧道，`Ctrl+C` 退出并关闭自己开的隧道
+2. 开 SSH 隧道（端口见下表）
+3. 打开浏览器
+4. 保持隧道，`Ctrl+C` 关闭
 
-命令行方式：
+两条链路的本地端口不同，**可以同时开着互不干扰**：
+
+| 链路 | WebRTC | HLS | RTSP | 节点地址 |
+| --- | --- | --- | --- | --- |
+| 1) 局域网直连 | 8889 | 8888 | 8554 | mDNS 解析（如 `192.168.150.239`） |
+| 2) 内网穿透 | 9889 | 9888 | 9554 | `config/devices.private.ini` 里的 `100.x` |
+| 3) 自动 | 8889 | 8888 | 8554 | 先局域后穿透 |
+
+识别页会自动跟随最后启动的那条隧道（`start-stream.ps1` 把地址写进
+`.tmp-ops/stream-whep.txt`），所以 `start-detect-web.bat` 不用带参数。
+
+命令行方式（跳过菜单）：
 
 ```powershell
-# 默认：WebRTC，走局域网
-powershell -ExecutionPolicy Bypass -File stream\start-stream.ps1
+# 局域网
+powershell -ExecutionPolicy Bypass -File stream\start-stream.ps1 -Link lan
 
-# 强制走内网穿透（Tailscale）
-powershell -ExecutionPolicy Bypass -File stream\start-stream.ps1 -Link tailscale
+# 内网穿透（用 9889/9888/9554）
+powershell -ExecutionPolicy Bypass -File stream\start-stream.ps1 -Link tailscale `
+    -WebrtcPort 9889 -HlsPort 9888 -RtspPort 9554
 
 # 不开浏览器，只开隧道跑 60 秒（调试用）
 powershell -ExecutionPolicy Bypass -File stream\start-stream.ps1 -NoBrowser -Seconds 60
@@ -34,13 +57,19 @@ powershell -ExecutionPolicy Bypass -File stream\start-stream.ps1 -NoBrowser -Sec
 powershell -ExecutionPolicy Bypass -File stream\start-stream.ps1 -NodeOptions "--copy"
 ```
 
+> `-WebrtcPort/-HlsPort/-RtspPort` 只改**本地**端口，节点上固定是 8889/8888/8554。
+
 ## 三个观看地址
+
+以局域网链路为例：
 
 | 方式 | 地址 | 延迟 | 说明 |
 | --- | --- | --- | --- |
 | **WebRTC（默认）** | `http://127.0.0.1:8889/prts` | 约 200–500 ms | 信令走隧道，视频走局域网 UDP 8189 |
 | HLS | `http://127.0.0.1:8888/prts` | 1–3 秒 | 分片机制决定，浏览器兼容性最好 |
 | RTSP | `rtsp://127.0.0.1:8554/prts` | <300 ms | 需要播放器（见下） |
+
+内网穿透链路把 8 开头换成 9 开头即可（`9889` / `9888` / `9554`）。
 
 电脑端**不需要装任何东西**：有 ssh 和浏览器就够了。解码是浏览器原生的。
 

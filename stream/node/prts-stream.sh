@@ -116,7 +116,7 @@ do_start() {
         tail -n 5 "$RUN_DIR/mediamtx.log" 2>/dev/null | sed 's/^/    /'
         exit 1
     fi
-    echo "  mediamtx: rtsp 127.0.0.1:$RTSP_PORT, hls 127.0.0.1:$HLS_PORT"
+    echo "  mediamtx: rtsp *:$RTSP_PORT, hls 127.0.0.1:$HLS_PORT"
 
     start_publisher || exit 1
     sleep 2

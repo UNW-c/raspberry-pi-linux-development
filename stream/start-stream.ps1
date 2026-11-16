@@ -125,6 +125,10 @@ $stateDirectory = Join-Path $repositoryRoot '.tmp-ops'
 New-Item -ItemType Directory -Force -Path $stateDirectory | Out-Null
 Set-Content -LiteralPath (Join-Path $stateDirectory 'stream-rtsp.txt') `
     -Value "rtsp://$($endpoint.Address):$NodeRtspPort/prts" -Encoding ASCII
+# The detector page reads this, so it always follows the tunnel that was started
+# last without needing an argument.
+Set-Content -LiteralPath (Join-Path $stateDirectory 'stream-whep.txt') `
+    -Value "http://127.0.0.1:$WebrtcPort/prts/whep" -Encoding ASCII
 
 $passwordState = New-PrstPasswordEnvironment -Password $password
 $tunnel = $null

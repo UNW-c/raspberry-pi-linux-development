@@ -20,7 +20,7 @@
 [CmdletBinding()]
 param(
     [int]$Port = 8891,
-    [string]$Whep = 'http://127.0.0.1:8889/prts/whep',
+    [string]$Whep = '',
     [string]$Python = '',
     [switch]$NoBrowser
 )
@@ -37,6 +37,21 @@ catch {
 
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repositoryRoot = $scriptDirectory
+while ($repositoryRoot -and -not (Test-Path -LiteralPath (Join-Path $repositoryRoot 'CMakeLists.txt'))) {
+    $repositoryRoot = Split-Path -Parent $repositoryRoot
+}
+
+# Follow whichever tunnel start-stream.ps1 opened last (LAN and Tailscale use
+# different local ports), unless one was passed explicitly.
+if ([string]::IsNullOrWhiteSpace($Whep)) {
+    $stateFile = Join-Path $repositoryRoot '.tmp-ops\stream-whep.txt'
+    if (Test-Path -LiteralPath $stateFile) {
+        $Whep = (Get-Content -LiteralPath $stateFile -Raw).Trim()
+    }
+    if ([string]::IsNullOrWhiteSpace($Whep)) {
+        $Whep = 'http://127.0.0.1:8889/prts/whep'
+    }
+}
 
 function Find-Python {
     param([string]$Explicit)
