@@ -8,22 +8,20 @@ prts_tests
 # Local scratch space used by ad-hoc ssh operations
 .tmp-ops/
 
+# Python bytecode (stream/web/serve.py)
+__pycache__/
+*.pyc
+
 # Private device addresses (Tailscale IPs, wifi names) and the operator notes
 config/devices.private.ini
 提示词.md
 
-# Desktop detector: python environment, model weights, scratch log
-.venv-detect/
+# Model weights (fetched by stream/web/fetch_ort.ps1 users / download scripts)
 models/
 *.onnx
-detect-test.log
-detect-test.err
-__pycache__/
-*.pyc
-pip-unpack-*/
 
-# Camera frames saved by scripts/camera_view.ps1 -SaveDir
-frames/
+# ONNX Runtime Web binaries (fetched by stream/web/fetch_ort.ps1)
+stream/web/vendor/
 
 # Editor and OS noise
 .vscode/
@@ -36,6 +34,3 @@ Thumbs.db
 # Logs and archives
 *.log
 *.tar.gz
-
-# ONNX Runtime Web binaries (fetched by stream/web/fetch_ort.ps1)
-stream/web/vendor/

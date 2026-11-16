@@ -52,14 +52,13 @@ PRTS_SKIP_BOOT=1 ssh seven@PRTS.local
 ├── controller/    控制层     参数解析、运行模式决策
 ├── service/       服务层     动画、自检、配置、会话状态、序列编排
 ├── model/         模型层     纯数据：颜色、系统快照、自检结果、配置结构
-├── driver/        驱动层     终端 ANSI 实现、时钟、Linux 系统探针
+├── driver/        驱动层     终端 ANSI 实现、时钟、Linux 系统探针、MQTT 客户端
 ├── utils/         工具层     UTF-8 文本宽度、ANSI 序列、日志、字符串切分
 ├── config/        配置层     prts.conf（动画）与 connection.ini（连接）
 ├── test/          测试层     自包含测试框架 + 假实现
-├── scripts/       工具脚本   按用途分目录：lib / connect / deploy / camera / mqtt / detect / setup
-├── stream/        图传项目   V4L2 + FFmpeg + RTSP，独立工作区，一级启动脚本在根上
-├── bin/           命令入口   prts-cam.cmd（加入 PATH 后全局可用）
-└── docs/          文档       环境、架构、动画规格、工作流、MQTT、检测
+├── scripts/       工具脚本   按用途分目录：lib / connect / deploy / mqtt / setup
+├── stream/        图传与识别  V4L2 + FFmpeg + RTSP；网页识别。独立工作区
+└── docs/          文档       环境、架构、动画规格、工作流、MQTT、识别
 ```
 
 依赖方向严格自上而下：`app → controller → service → model`，`service` 通过接口依赖
@@ -75,13 +74,10 @@ prts-boot --config F   # 追加一个配置文件
 
 prts-mqtt publish      # 采集系统数据并发到 MQTT（prts/telemetry）
 prts-mqtt subscribe    # 订阅主题并把消息打印出来
-
-prts-camera            # V4L2 采集 MJPG 帧并发到 prts/camera/frame
-prts-camera --count 50 --fps 5
-
-prts-web               # 把帧转成网页 /stream（默认 127.0.0.1:8080）
 prts-mqtt --help       # 帮助
 ```
+
+相机画面不走这些二进制：图传在 `stream/` 里（节点上的 `prts-stream` 命令）。
 
 ## 脚本
 
@@ -93,23 +89,16 @@ prts-mqtt --help       # 帮助
 | `scripts/deploy/` | `sync_to_pi.ps1` | Windows | 打包 → scp → 远端解包 → 编译 → 安装 |
 | `scripts/deploy/` | `push_all.ps1` | Windows | 提交并同时推送 gitee 与 github |
 | `scripts/deploy/` | `deploy.sh` | 树莓派 | CMake 编译、跑单测、安装二进制、写登录钩子 |
-| `scripts/camera/` | `camera_web.bat` / `.ps1` | Windows | 双击即看：拉起节点侧、开隧道、开浏览器 |
-| `scripts/camera/` | `camera_view.ps1` | Windows | 桌面窗口版，或 `-SaveDir` 存盘 |
-| `scripts/camera/` | `prts-camera-web.sh` | 树莓派 | 安装为 `prts-camera-web` 命令，启停相机与网页 |
-| `scripts/camera/` | `measure_latency.ps1` | Windows | 量端到端帧年龄（经隧道，含时钟校准） |
-| `scripts/camera/` | `inspect_camera.sh` | 树莓派 | 列出 USB / V4L2 / 设备树里的相机信息 |
 | `scripts/mqtt/` | `mqtt_listen.ps1` | Windows | 订阅主题并按行显示 |
-| `scripts/detect/` | `detect.bat` / `run_detect.ps1` | Windows | 双击跑奶龙检测（复用已有 Python 环境） |
-| `scripts/detect/` | `detect_nailong.py` | Windows | YOLOX 推理 + 画框 + 可选网页流 |
-| `scripts/detect/` | `download_model.ps1` | Windows | 下载 ONNX 模型到 `models/`（不入库） |
+| `scripts/setup/` | `provision_pi.sh` | 树莓派 (root) | 安装工具链与依赖、建目录、导出 locale |
 | `stream/` | `start-stream.bat` / `.ps1` | Windows | 双击看图传：起节点推流、开隧道、开浏览器 |
+| `stream/` | `start-detect-web.bat` / `.ps1` | Windows | 双击看识别：托管检测页面（WebRTC + 叠加层） |
 | `stream/node/` | `prts-stream.sh` | 树莓派 | 安装为 `prts-stream`，启停 mediamtx + ffmpeg |
 | `stream/node/` | `install_stream.sh` | 树莓派 | 装 ffmpeg、放 mediamtx、装命令 |
 | `stream/node/` | `bench_capture.sh` | 树莓派 | v4l2+ffmpeg 采集/编码基准 |
+| `stream/web/` | `serve.py` / `app.js` / `worker.js` | Windows | 检测页面：WHEP 代理、叠加层、Worker 推理 |
+| `stream/web/` | `fetch_ort.ps1` | Windows | 取 onnxruntime-web 的 wasm（11 MB，不入库） |
 | `stream/pc/` | `play-stream.ps1` | Windows | 可选：ffplay 拉 RTSP（需先装 FFmpeg） |
-| `scripts/setup/` | `install_commands.ps1` | Windows | 把 `bin` 加入用户 PATH（`prts-cam` 全局可用） |
-| `scripts/setup/` | `provision_pi.sh` | 树莓派 (root) | 安装工具链与依赖、建目录、导出 locale |
-| `bin/` | `prts-cam.cmd` | Windows | 命令行入口：`prts-cam [web\|view\|status\|stop]` |
 
 ## MQTT 遥测
 
@@ -127,91 +116,34 @@ powershell -ExecutionPolicy Bypass -File scripts\mqtt\mqtt_listen.ps1 -Topic 'pr
 MQTT 客户端是按 MQTT 3.1.1 手写的（`driver/mqtt_codec` + `driver/tcp_mqtt_client`），
 不依赖 libmosquitto。详见 [MQTT 遥测链路](docs/05-mqtt.md)。
 
-## 相机
+## 图传与识别
 
-树莓派上插的 USB 相机（UVC，免驱）由 `prts-camera` 采集成 MJPEG 帧发到 MQTT，
-`prts-web` 再把帧转成网页的 MJPEG 流。
-
-相机只支持 640×480 / 1280×720，而 WiFi 只有约 230–320 KiB/s。决定延迟的是**单帧字节数**：
-一帧必须全部到齐才能显示，所以默认在树莓派上重编码到 160×120（约 2.2 KB，30 fps，
-共约 64 KiB/s），端到端延迟中位数 **约 30–45 ms**（含 15 ms 曝光）。要更清楚的画面就换 preset，
-代价是延迟变大（实测见 [docs/05-mqtt.md](docs/05-mqtt.md)）：
-
-```bash
-prts-camera-web restart --preset realtime   # 默认 160x120 30fps，~34 ms
-prts-camera-web restart --preset balanced   # 320x240 20fps，~55 ms
-prts-camera-web restart --preset sharp      # 640x480 15fps，链路打满
-```
-
-```bash
-# 树莓派
-prts-camera &
-prts-web
-```
-
-```powershell
-# 装一次命令（加入用户 PATH），之后任意目录可用
-powershell -ExecutionPolicy Bypass -File scripts\setup\install_commands.ps1
-
-prts-cam            # 浏览器看画面（自动拉起节点侧 + 开隧道）
-prts-cam status     # 节点进程 / 端点 / 本机隧道
-prts-cam stop       # 停掉
-# 浏览器地址：http://127.0.0.1:18080/
-```
-
-页面底部会显示 `LATENCY`：浏览器自己按帧上的采集时间戳算出的真实端到端延迟
-（树莓派没有 RTC，页面会先用 `/status` 的 `server_ms` 校准时钟差）。
-
-想单独量一遍：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\camera\measure_latency.ps1
-```
-
-因为网页服务只监听节点的 `127.0.0.1`、通过 SSH 本地转发访问，
-所以直连内网和通过内网穿透（frp）连 SSH 时，浏览器里的地址和用法完全一样。
-
-## 图传（RTSP）
-
-相机画面还提供一条独立链路：V4L2 直接取流 → FFmpeg 硬件编码 H.264 → RTSP，
-不再走 MQTT 和 JPEG 重编码。双击即用：
+相机画面走一条独立链路：V4L2 直接取流 → FFmpeg 硬件编码 H.264 → RTSP（mediamtx），
+浏览器用 WebRTC 收，约 200–500 ms。双击即用：
 
 ```
-stream\start-stream.bat
+stream\start-stream.bat        # 起节点推流、开隧道、开浏览器
+stream\start-detect-web.bat    # 识别页：同一路画面 + 叠加层
 ```
-
-之后浏览器打开 `http://127.0.0.1:8889/prts`（WebRTC，约 200–500 ms）。
 
 | 方式 | 地址 | 延迟 |
 | --- | --- | --- |
 | WebRTC（默认） | `http://127.0.0.1:8889/prts` | 200–500 ms |
+| 识别页 | `http://127.0.0.1:8891/` | 画面同上，框跟随 |
 | HLS | `http://127.0.0.1:8888/prts` | 1–3 秒 |
 | RTSP | `rtsp://127.0.0.1:8554/prts` | <300 ms（需播放器） |
 
-电脑端不用装任何东西。640×480 H.264 实测 124 KiB/s、约 28 fps，
-局域网和 Tailscale 都够跑。节点侧 `prts-stream start/stop/status/logs`。
-细节、安装步骤和踩过的坑见 [stream/README.md](stream/README.md)。
+电脑端不用装任何东西（识别页要 Chrome / Edge）。640×480 H.264 实测 124 KiB/s、
+约 28 fps，局域网和 Tailscale 都够跑。
 
-## 奶龙检测
-
-电脑端跑 YOLOX（[nkxingxh/NailongDetection](https://github.com/nkxingxh/NailongDetection)，
-ONNX，AGPL-3.0），从**图传的 RTSP 流**取帧（640×480）、画框，树莓派不参与推理：
-
-```powershell
-scripts\detect\detect.bat                 # 弹窗显示带框画面
-scripts\detect\detect.bat --http 18081    # 或者开个带框的网页流
-scripts\detect\detect.bat --source snapshot   # 退回旧相机页面（160×120）
-```
-
-依赖只有 opencv + numpy（OpenCV 自带 ONNX 导入器），脚本会复用机器上已有的
-Python 环境。模型下载到 `models/`，不入库。细节见 [docs/06-detect.md](docs/06-detect.md)。
-
-先开图传再开识别；两条链路在相机上互斥。稳定在约 10 fps，瓶颈是推理而不是链路。
+识别在**页面里的 Worker** 跑 YOLOX（ONNX Runtime Web）：画面就是浏览器那一路，
+同一次解码、同一帧，只有框画在叠加层上，所以推理再慢也不影响画面。细节见
+[stream/README.md](stream/README.md) 和 [docs/06-detect.md](docs/06-detect.md)。
 
 ## 私有设备地址
 
 Tailscale 的 IP、之后的 WiFi 名称这类信息放在 `config/devices.private.ini`，
-该文件在 `.gitignore` 里，不会进仓库。连接、部署、相机脚本会自动读取它，
+该文件在 `.gitignore` 里，不会进仓库。连接、部署、图传脚本会自动读取它，
 把 Tailscale 地址作为局域网名字不通时的兜底：
 
 ```powershell
@@ -277,3 +209,6 @@ git push github main
 - [分层架构](docs/02-architecture.md)
 - [PRTS 引导序列规格](docs/03-prts-boot-animation.md)
 - [日常开发流程](docs/04-workflow.md)
+- [MQTT 遥测](docs/05-mqtt.md)
+- [浏览器端识别](docs/06-detect.md)
+- [图传（V4L2 + FFmpeg + RTSP）](stream/README.md)

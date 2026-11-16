@@ -31,7 +31,7 @@ connect_prts.ps1 -Link lan            # 只用局域网
 connect_prts.ps1 -Link tailscale      # 强制走内网穿透
 ```
 
-`sync_to_pi.ps1`、`camera_web.ps1`、`start-stream.ps1` 都有同名参数。
+`sync_to_pi.ps1`、`start-stream.ps1` 都有同名参数。
 
 坑：开了 MagicDNS 后 `PRTS` 会解析成 `100.x`（Tailscale 网段），ssh 和隧道里所有流量
 都会绕道穿透，实测带宽只有局域网的几分之一。所以解析时把 `100.64.0.0/10` 排到最后，
