@@ -313,7 +313,9 @@ class DetectionWorker(threading.Thread):
         self.fps = 0.0
         self.running = True
         self._lastSeen = -1
-        self._started = time.monotonic()
+        # Never name a Thread attribute _started or _ident: those belong to
+        # threading.Thread itself and shadowing them breaks start().
+        self._startedAt = time.monotonic()
 
     def run(self) -> None:
         while self.running:
@@ -323,7 +325,7 @@ class DetectionWorker(threading.Thread):
                 continue
             self._lastSeen = self.frames.seen
             detections = self.detector.detect(frame)
-            elapsed = max(1e-6, time.monotonic() - self._started)
+            elapsed = max(1e-6, time.monotonic() - self._startedAt)
             with self.lock:
                 self.results = detections
                 self.shape = frame.shape
