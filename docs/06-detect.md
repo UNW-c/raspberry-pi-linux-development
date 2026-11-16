@@ -49,9 +49,25 @@ powershell -ExecutionPolicy Bypass -File scripts\detect\run_detect.ps1 -Python C
 ... run_detect.ps1                              # 弹窗显示带框画面
 ... run_detect.ps1 --no-window --count 30       # 只跑 30 帧，只打日志
 ... run_detect.ps1 --http 18081                 # 另外开一个带框的网页流
-... run_detect.ps1 --score 0.5 --scale 6        # 提高阈值、放大窗口
+... run_detect.ps1 --score 0.5                  # 提高阈值
+... run_detect.ps1 --display-width 1280         # 窗口更大（0 = 原始 640×480）
+... run_detect.ps1 --fps 60                     # 窗口刷新率，跟识别无关
 ... run_detect.ps1 --source snapshot            # 退回旧相机页面取帧
 ```
+
+## 显示和识别是并行跑的
+
+早期版本是「取一帧 → 推理 → 画框 → 显示」串行，所以窗口只有 10 fps、
+而且 640×480 被最近邻放大 4 倍，看着又块又卡。现在拆成三件事：
+
+| 线程 | 干什么 | 节奏 |
+| --- | --- | --- |
+| 取流线程 | `capture.read()` 持续读，只留最新一帧 | 30 fps |
+| 识别线程 | 拿最新帧跑 YOLOX，结果存起来 | 约 15 fps（推理为瓶颈） |
+| 显示循环 | 每帧拿**最新画面** + 最近一次识别结果，平滑放大到 960 宽 | 30 fps（`--fps`） |
+
+好处：窗口和大图传是同一张画面（同分辨率、同插值），刷新率也一档；
+框可能比画面晚最多一个推理周期（约 70 ms），肉眼看不出来。
 
 ## 画面来源
 
@@ -89,8 +105,9 @@ powershell -ExecutionPolicy Bypass -File scripts\detect\run_detect.ps1 -Python C
 | 模型加载 | 约 0.3 s |
 | 推理 | 77 ms / 帧（8 线程） |
 | 读 RTSP（含首次连接约 12 s） | 640×480，30 fps 源 |
-| 整体 | **约 10 fps**（推理为瓶颈，不是链路） |
+| 识别速率 | **约 15 fps**（推理为瓶颈，不是链路） |
+| 显示 | 30 fps，960×720 平滑放大 |
 | 示例图（`images/examples.png`） | `long` 0.91、`anime` 0.88 |
 
-换成 RTSP 之后帧率上限从「链路能送多少张 160×120」变成「模型能算多快」，
-所以稳定在 10 fps 左右，与画面复杂度和链路抖动无关。
+识别不再是「一张一张地放」，所以画面流畅度和图传一致，识别自己按 15 fps 跑。
+带框网页流 `/snapshot` 一张是 960×720、约 48 KB。

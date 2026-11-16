@@ -196,13 +196,7 @@ class FrameSource:
 
 
 class RtspSource:
-    """Reads the newest frame from the RTSP stream.
-
-    A background thread keeps draining the stream, so the frame handed to the
-    detector is the one from this instant instead of one ffmpeg buffered a second
-    ago. The stream carries the native 640x480 picture, which detects better than
-    the downscaled snapshot the old path served.
-    """
+    """Blocking reader for the RTSP stream, with reconnect on a dead tunnel."""
 
     def __init__(self, url: str) -> None:
         self.url = url
@@ -220,13 +214,8 @@ class RtspSource:
         if not self.capture.isOpened():
             raise RuntimeError(f"cannot open {url}")
         self.capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        self.lock = threading.Lock()
-        self.latest = None
-        self.running = True
-        self.misses = 0
         self.lastReconnect = 0.0
-        self.thread = threading.Thread(target=self._pump, daemon=True)
-        self.thread.start()
+        self.misses = 0
 
     def _reconnect(self) -> None:
         """Reopens the stream after the tunnel or the publisher went away."""
@@ -244,40 +233,107 @@ class RtspSource:
         except cv2.error:
             self.capture = cv2.VideoCapture()
 
-    def _pump(self) -> None:
-        # Never let an exception escape: a dead tunnel makes OpenCV throw, and
-        # that would end the thread and silently freeze the picture.
-        while self.running:
-            try:
-                ok, frame = self.capture.read()
-            except cv2.error:
-                ok, frame = False, None
-            if not ok or frame is None:
-                time.sleep(0.2)
-                self._reconnect()
-                continue
-            with self.lock:
-                self.latest = frame
-
     def read(self) -> np.ndarray | None:
-        with self.lock:
-            frame = self.latest
-            self.latest = None
-        if frame is None:
+        # Never let an exception escape: a dead tunnel makes OpenCV throw, and
+        # that would end the reader thread and silently freeze the picture.
+        try:
+            ok, frame = self.capture.read()
+        except cv2.error:
+            ok, frame = False, None
+        if not ok or frame is None:
             self.misses += 1
-            if self.misses in (40, 200):
+            if self.misses in (30, 200):
                 print(
                     f"no frames from {self.url} - start the stream first "
                     f"(stream\\start-stream.bat)",
                     flush=True,
                 )
+            time.sleep(0.2)
+            self._reconnect()
             return None
         self.misses = 0
         return frame
 
     def close(self) -> None:
+        try:
+            self.capture.release()
+        except cv2.error:
+            pass
+
+
+class LatestFrame:
+    """Keeps the newest frame from any source: one reader, many consumers.
+
+    Display and detection both need "the picture as of now", at their own pace.
+    Without this, whoever reads first steals the frame from the other, and the
+    display ends up as slow as the detector.
+    """
+
+    def __init__(self, source) -> None:
+        self.source = source
+        self.latest = None
+        self.seen = 0          # frames pulled from the source
+        self.dropped = 0       # frames replaced before any consumer took them
+        self.running = True
+        self.thread = threading.Thread(target=self._pump, daemon=True)
+        self.thread.start()
+
+    def _pump(self) -> None:
+        while self.running:
+            frame = self.source.read()
+            if frame is None:
+                time.sleep(0.005)
+                continue
+            if self.latest is not None:
+                self.dropped += 1
+            self.latest = frame
+            self.seen += 1
+
+    def get(self):
+        """The current picture; never blocks and never removes it."""
+        return self.latest
+
+    def close(self) -> None:
         self.running = False
-        self.capture.release()
+        self.source.close()
+
+
+class DetectionWorker(threading.Thread):
+    """Runs the detector on the newest frame, in parallel with the display."""
+
+    def __init__(self, detector, frames: LatestFrame) -> None:
+        super().__init__(daemon=True)
+        self.detector = detector
+        self.frames = frames
+        self.lock = threading.Lock()
+        self.results: list[dict] = []
+        self.shape = None
+        self.processed = 0
+        self.hits = 0
+        self.fps = 0.0
+        self.running = True
+        self._lastSeen = -1
+        self._started = time.monotonic()
+
+    def run(self) -> None:
+        while self.running:
+            frame = self.frames.get()
+            if frame is None or self.frames.seen == self._lastSeen:
+                time.sleep(0.005)
+                continue
+            self._lastSeen = self.frames.seen
+            detections = self.detector.detect(frame)
+            elapsed = max(1e-6, time.monotonic() - self._started)
+            with self.lock:
+                self.results = detections
+                self.shape = frame.shape
+                self.processed += 1
+                self.hits += 1 if detections else 0
+                self.fps = self.processed / elapsed
+
+    def snapshot(self):
+        with self.lock:
+            return list(self.results), self.shape, self.processed, self.hits, self.fps
 
 
 def open_source(args):
@@ -316,7 +372,7 @@ class AnnotatedStream:
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:  # noqa: N802 - http.server naming
-                if self.path not in ("/", "/stream"):
+                if self.path not in ("/", "/stream", "/snapshot"):
                     self.send_error(404)
                     return
                 if self.path == "/":
@@ -330,6 +386,16 @@ class AnnotatedStream:
                     self.send_header("Content-Length", str(len(page)))
                     self.end_headers()
                     self.wfile.write(page)
+                    return
+                if self.path == "/snapshot":
+                    with owner.lock:
+                        payload = owner.jpeg
+                    self.send_response(200 if payload else 503)
+                    self.send_header("Content-Type", "image/jpeg")
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    if payload:
+                        self.wfile.write(payload)
                     return
                 self.send_response(200)
                 self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
@@ -359,17 +425,26 @@ def load_labels(path: str) -> list[str]:
         return [line.strip() for line in handle if line.strip()]
 
 
-def draw(image: np.ndarray, detections: list[dict], fps: float, info: str) -> np.ndarray:
-    canvas = image.copy()
-    scale = max(1, canvas.shape[1] // 320)
+def draw(image: np.ndarray, detections: list[dict], fps: float, info: str,
+         width: int = 0) -> np.ndarray:
+    """Draws the boxes; boxes are in source pixels, the canvas may be resized."""
+    scale = 1.0
+    if width and width > 0:
+        height = int(round(image.shape[0] * width / image.shape[1]))
+        canvas = cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
+        scale = width / image.shape[1]
+    else:
+        canvas = image.copy()
+
+    unit = max(1, canvas.shape[1] // 320)
     for item in detections:
-        x, y, w, h = (int(value) for value in item["box"])
-        cv2.rectangle(canvas, (x, y), (x + w, y + h), (160, 220, 255), scale)
+        x, y, w, h = (int(round(value * scale)) for value in item["box"])
+        cv2.rectangle(canvas, (x, y), (x + w, y + h), (160, 220, 255), unit)
         caption = f"{item['label']} {item['score']:.2f}"
         cv2.putText(canvas, caption, (x, max(12, y - 4)), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.4 * scale, (160, 220, 255), max(1, scale - 1), cv2.LINE_AA)
+                    0.4 * unit, (160, 220, 255), max(1, unit - 1), cv2.LINE_AA)
     cv2.putText(canvas, f"{info}  {fps:4.1f} fps", (6, canvas.shape[0] - 6),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.4 * scale, (200, 200, 200), max(1, scale - 1),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.4 * unit, (200, 200, 200), max(1, unit - 1),
                 cv2.LINE_AA)
     return canvas
 
@@ -391,7 +466,10 @@ def main() -> int:
     parser.add_argument("--threads", type=int, default=0, help="0 = one per core")
     parser.add_argument("--http", type=int, default=0, help="also serve annotated MJPEG on this port")
     parser.add_argument("--no-window", action="store_true")
-    parser.add_argument("--scale", type=int, default=4, help="window upscale factor")
+    parser.add_argument("--display-width", type=int, default=960,
+                        help="window width in pixels; 0 = native camera size")
+    parser.add_argument("--fps", type=int, default=30,
+                        help="window refresh rate, independent of the detector")
     parser.add_argument("--json", action="store_true", help="print each result as json")
     parser.add_argument("--backend", choices=["auto", "onnxruntime", "opencv"], default="auto",
                         help="inference backend, auto prefers onnxruntime when installed")
@@ -418,64 +496,88 @@ def main() -> int:
         flush=True,
     )
 
-    processed = 0
+    frames = LatestFrame(source)
     started = time.monotonic()
     last_report = started
-    hits = 0
-    finished = False
 
-    while not finished:
-        frame = source.read()
-        if frame is None:
-            if time.monotonic() - started > args.idle_timeout and processed == 0:
-                print(
-                    f"no frame within {args.idle_timeout:.0f}s, giving up - "
-                    f"source was {source_label}",
-                    flush=True,
-                )
-                if stream is not None and stream.server is not None:
-                    stream.server.shutdown()
-                return 5
-            time.sleep(0.01)
-            continue
+    def report(processed: int, fps: float, detections: list[dict]) -> None:
+        nonlocal last_report
+        if time.monotonic() - last_report < 2.0:
+            return
+        last_report = time.monotonic()
+        summary = ", ".join(f"{d['label']} {d['score']:.2f}" for d in detections) or "clear"
+        print(f"{processed:5d} frames  {fps:5.1f} fps  {summary}", flush=True)
 
-        detections = detector.detect(frame)
-        processed += 1
-        hits += 1 if detections else 0
-        elapsed = time.monotonic() - started
-        fps = processed / elapsed if elapsed > 0 else 0.0
-
-        info = f"{frame.shape[1]}x{frame.shape[0]}  {processed} frames  {hits} with target"
-        if args.json:
-            print(json.dumps({"fps": round(fps, 2), "detections": detections}), flush=True)
-
-        annotated = draw(frame, detections, fps, info)
-        if stream is not None:
-            stream.update(annotated)
-
-        if time.monotonic() - last_report >= 2.0:
-            last_report = time.monotonic()
-            summary = ", ".join(f"{d['label']} {d['score']:.2f}" for d in detections) or "clear"
-            print(f"{processed:5d} frames  {fps:5.1f} fps  {summary}", flush=True)
-
-        if args.no_window:
-            if args.count and processed >= args.count:
-                finished = True
-            continue
-
-        shown = cv2.resize(
-            annotated,
-            (annotated.shape[1] * args.scale, annotated.shape[0] * args.scale),
-            interpolation=cv2.INTER_NEAREST,
+    def idle_gave_up(processed: int) -> bool:
+        if processed > 0 or time.monotonic() - started <= args.idle_timeout:
+            return False
+        print(
+            f"no frame within {args.idle_timeout:.0f}s, giving up - source was {source_label}",
+            flush=True,
         )
-        cv2.imshow("PRTS / DETECT", shown)
-        key = cv2.waitKey(1) & 0xFF
-        if key in (27, ord("q")) or (args.count and processed >= args.count):
-            finished = True
+        return True
 
-    if not args.no_window:
+    if args.no_window:
+        # No display: detection runs in this thread, one frame at a time.
+        processed = 0
+        lastSeen = -1
+        while True:
+            frame = frames.get()
+            if frame is None or frames.seen == lastSeen:
+                if idle_gave_up(processed):
+                    frames.close()
+                    return 5
+                time.sleep(0.005)
+                continue
+            lastSeen = frames.seen
+            detections = detector.detect(frame)
+            processed += 1
+            fps = processed / max(1e-6, time.monotonic() - started)
+            if args.json:
+                print(json.dumps({"fps": round(fps, 2), "detections": detections}), flush=True)
+            if stream is not None:
+                info = f"{frame.shape[1]}x{frame.shape[0]}  det {processed}"
+                stream.update(draw(frame, detections, fps, info, args.display_width))
+            report(processed, fps, detections)
+            if args.count and processed >= args.count:
+                break
+    else:
+        # Display at its own pace from the newest frame; detection runs beside it
+        # in a worker, so the picture stays smooth and the boxes trail slightly.
+        worker = DetectionWorker(detector, frames)
+        worker.start()
+        interval = 1.0 / max(1, args.fps)
+        width = args.display_width
+        processed = 0
+        while True:
+            tick = time.monotonic()
+            frame = frames.get()
+            if frame is None:
+                if idle_gave_up(0):
+                    break
+                time.sleep(0.005)
+                continue
+
+            detections, shape, processed, hits, detectFps = worker.snapshot()
+            info = (f"{frame.shape[1]}x{frame.shape[0]}  det {processed}  "
+                    f"target {hits}")
+            annotated = draw(frame, detections, detectFps, info, width)
+            if stream is not None:
+                stream.update(annotated)
+            cv2.imshow("PRTS / DETECT", annotated)
+            report(processed, detectFps, detections)
+
+            key = cv2.waitKey(1) & 0xFF
+            if key in (27, ord("q")) or (args.count and processed >= args.count):
+                break
+            spent = time.monotonic() - tick
+            if spent < interval:
+                time.sleep(interval - spent)
+
+        worker.running = False
         cv2.destroyAllWindows()
-    source.close()
+
+    frames.close()
     if stream is not None and stream.server is not None:
         stream.server.shutdown()
     print(f"stopped after {processed} frames", flush=True)
