@@ -17,9 +17,27 @@
 排障顺序：
 
 1. 树莓派是否上电（电源灯常亮、绿色活动灯闪烁）
-2. 同一网段（当前 `192.168.210.x`）
+2. 同一网段（当前 `192.168.150.x`）
 3. `ping PRTS.local`（mDNS，由 avahi 提供）
 4. mDNS 不可用时，把固定 IP 写进 `config/connection.ini` 的 `fallback_host`
+
+### 链路选择
+
+局域网和内网穿透（Tailscale）同时可用时，默认走局域网：
+
+```powershell
+connect_prts.ps1                      # auto：局域网优先，Tailscale 兜底
+connect_prts.ps1 -Link lan            # 只用局域网
+connect_prts.ps1 -Link tailscale      # 强制走内网穿透
+```
+
+`sync_to_pi.ps1`、`camera_web.ps1`、`start-stream.ps1` 都有同名参数。
+
+坑：开了 MagicDNS 后 `PRTS` 会解析成 `100.x`（Tailscale 网段），ssh 和隧道里所有流量
+都会绕道穿透，实测带宽只有局域网的几分之一。所以解析时把 `100.64.0.0/10` 排到最后，
+只有在局域网名字全都不通时才用它。
+
+局域网地址、Tailscale 地址、WiFi 名称都放在 `config/devices.private.ini`（不入库）。
 
 ## 2. 开发：代码怎么到树莓派上
 

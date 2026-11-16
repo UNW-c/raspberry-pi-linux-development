@@ -68,6 +68,7 @@ install -m 0755 "$BUILD_DIR/prts-mqtt" "$INSTALL_BIN_DIR/prts-mqtt"
 install -m 0755 "$BUILD_DIR/prts-camera" "$INSTALL_BIN_DIR/prts-camera"
 install -m 0755 "$BUILD_DIR/prts-web" "$INSTALL_BIN_DIR/prts-web"
 install -m 0755 "$PROJECT_ROOT/scripts/camera/prts-camera-web.sh" "$INSTALL_BIN_DIR/prts-camera-web"
+install -m 0755 "$PROJECT_ROOT/stream/node/prts-stream.sh" "$INSTALL_BIN_DIR/prts-stream"
 
 # The configuration schema evolves with the binary. A stale installed copy is
 # backed up and replaced so that an old palette or pacing cannot silently

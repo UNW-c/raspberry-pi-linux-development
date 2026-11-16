@@ -56,9 +56,10 @@ PRTS_SKIP_BOOT=1 ssh seven@PRTS.local
 ├── utils/         工具层     UTF-8 文本宽度、ANSI 序列、日志、字符串切分
 ├── config/        配置层     prts.conf（动画）与 connection.ini（连接）
 ├── test/          测试层     自包含测试框架 + 假实现
-├── scripts/       工具脚本   按用途分目录：lib / connect / deploy / camera / mqtt / setup
+├── scripts/       工具脚本   按用途分目录：lib / connect / deploy / camera / mqtt / detect / setup
+├── stream/        图传项目   V4L2 + FFmpeg + RTSP，独立工作区，一级启动脚本在根上
 ├── bin/           命令入口   prts-cam.cmd（加入 PATH 后全局可用）
-└── docs/          文档       环境、架构、动画规格、工作流、MQTT
+└── docs/          文档       环境、架构、动画规格、工作流、MQTT、检测
 ```
 
 依赖方向严格自上而下：`app → controller → service → model`，`service` 通过接口依赖
@@ -101,6 +102,11 @@ prts-mqtt --help       # 帮助
 | `scripts/detect/` | `detect.bat` / `run_detect.ps1` | Windows | 双击跑奶龙检测（复用已有 Python 环境） |
 | `scripts/detect/` | `detect_nailong.py` | Windows | YOLOX 推理 + 画框 + 可选网页流 |
 | `scripts/detect/` | `download_model.ps1` | Windows | 下载 ONNX 模型到 `models/`（不入库） |
+| `stream/` | `start-stream.bat` / `.ps1` | Windows | 双击看图传：起节点推流、开隧道、开浏览器 |
+| `stream/node/` | `prts-stream.sh` | 树莓派 | 安装为 `prts-stream`，启停 mediamtx + ffmpeg |
+| `stream/node/` | `install_stream.sh` | 树莓派 | 装 ffmpeg、放 mediamtx、装命令 |
+| `stream/node/` | `bench_capture.sh` | 树莓派 | v4l2+ffmpeg 采集/编码基准 |
+| `stream/pc/` | `play-stream.ps1` | Windows | 可选：ffplay 拉 RTSP（需先装 FFmpeg） |
 | `scripts/setup/` | `install_commands.ps1` | Windows | 把 `bin` 加入用户 PATH（`prts-cam` 全局可用） |
 | `scripts/setup/` | `provision_pi.sh` | 树莓派 (root) | 安装工具链与依赖、建目录、导出 locale |
 | `bin/` | `prts-cam.cmd` | Windows | 命令行入口：`prts-cam [web\|view\|status\|stop]` |
@@ -164,6 +170,27 @@ powershell -ExecutionPolicy Bypass -File scripts\camera\measure_latency.ps1
 
 因为网页服务只监听节点的 `127.0.0.1`、通过 SSH 本地转发访问，
 所以直连内网和通过内网穿透（frp）连 SSH 时，浏览器里的地址和用法完全一样。
+
+## 图传（RTSP）
+
+相机画面还提供一条独立链路：V4L2 直接取流 → FFmpeg 硬件编码 H.264 → RTSP，
+不再走 MQTT 和 JPEG 重编码。双击即用：
+
+```
+stream\start-stream.bat
+```
+
+之后浏览器打开 `http://127.0.0.1:8889/prts`（WebRTC，约 200–500 ms）。
+
+| 方式 | 地址 | 延迟 |
+| --- | --- | --- |
+| WebRTC（默认） | `http://127.0.0.1:8889/prts` | 200–500 ms |
+| HLS | `http://127.0.0.1:8888/prts` | 1–3 秒 |
+| RTSP | `rtsp://127.0.0.1:8554/prts` | <300 ms（需播放器） |
+
+电脑端不用装任何东西。640×480 H.264 实测 124 KiB/s、约 28 fps，
+局域网和 Tailscale 都够跑。节点侧 `prts-stream start/stop/status/logs`。
+细节、安装步骤和踩过的坑见 [stream/README.md](stream/README.md)。
 
 ## 奶龙检测
 
