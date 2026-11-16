@@ -78,9 +78,17 @@ $sshOptions = @(
 )
 
 # The playlist is the readiness signal: the port can be open while mediamtx is
-# still waiting for the publisher.
+# still waiting for the publisher. mediamtx answers the playlist URL with a
+# redirect, so -L is required.
 function Test-StreamPage {
-    return (Test-PrstHttpPage -Port $HlsPort -Path '/prts/index.m3u8' -TimeoutSeconds 4) -ge 0
+    try {
+        $body = & curl.exe --noproxy '*' -sL --max-time 4 `
+            "http://127.0.0.1:$HlsPort/prts/index.m3u8"
+        return ($LASTEXITCODE -eq 0 -and ($body -join "`n") -match '#EXTM3U')
+    }
+    catch {
+        return $false
+    }
 }
 
 Write-PrstLinkPanel -Node "$user@$($endpoint.Name) ($($endpoint.Address))" -State 'STREAM' `

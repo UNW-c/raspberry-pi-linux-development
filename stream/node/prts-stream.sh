@@ -85,11 +85,11 @@ start_publisher() {
         encoder_args=(-c:v h264_v4l2m2m -pix_fmt yuv420p -b:v "$BITRATE" -g 60)
     fi
 
-    nohup ffmpeg -hide_banner -loglevel warning \
+    nohup setsid ffmpeg -hide_banner -loglevel warning \
         -f v4l2 -input_format mjpeg -video_size "$SIZE" -framerate "$FPS" -i "$DEVICE" \
         "${encoder_args[@]}" \
         -f rtsp -rtsp_transport tcp "$RTSP_URL" \
-        >"$RUN_DIR/publisher.log" 2>&1 &
+        </dev/null >"$RUN_DIR/publisher.log" 2>&1 &
     echo "  publisher: $MODE $SIZE@$FPS${BITRATE:+ bitrate $BITRATE} -> $RTSP_URL"
 }
 
@@ -105,8 +105,10 @@ do_start() {
     mkdir -p "$RUN_DIR"
 
     if ! is_running mediamtx; then
-        # mediamtx wants its working directory to hold the config.
-        ( cd "$RUN_DIR" && nohup "$BIN_DIR/mediamtx" "$CONFIG" >"$RUN_DIR/mediamtx.log" 2>&1 & )
+        # setsid detaches the process from the ssh session: without it the
+        # server dies as soon as the ssh connection that started it closes.
+        ( cd "$RUN_DIR" && nohup setsid "$BIN_DIR/mediamtx" "$CONFIG" </dev/null \
+            >"$RUN_DIR/mediamtx.log" 2>&1 & )
         sleep 1.5
     fi
     if ! is_running mediamtx; then
@@ -121,7 +123,7 @@ do_start() {
 
     echo
     local probe
-    probe=$(ffprobe -v error -select_streams v:0 \
+    probe=$(timeout 15 ffprobe -v error -rtsp_transport tcp -select_streams v:0 \
         -show_entries stream=codec_name,width,height,avg_frame_rate,bit_rate \
         -of default=nw=1 "$RTSP_URL" 2>&1)
     if echo "$probe" | grep -q codec_name; then
@@ -157,7 +159,7 @@ do_status() {
     done
 
     echo "--- stream ---"
-    ffprobe -v error -select_streams v:0 \
+    timeout 15 ffprobe -v error -rtsp_transport tcp -select_streams v:0 \
         -show_entries stream=codec_name,width,height,avg_frame_rate,bit_rate \
         -of default=nw=1 "$RTSP_URL" 2>&1 | sed 's/^/  /'
 
