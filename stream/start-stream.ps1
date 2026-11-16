@@ -24,10 +24,13 @@
 [CmdletBinding()]
 param(
     [string]$ConfigPath = '',
+    [int]$WebrtcPort = 8889,
     [int]$HlsPort = 8888,
     [int]$RtspPort = 8554,
     [ValidateSet('auto', 'lan', 'tailscale')]
     [string]$Link = 'auto',
+    [ValidateSet('webrtc', 'hls')]
+    [string]$Viewer = 'webrtc',
     [string]$NodeOptions = '',
     [switch]$NoBrowser,
     [int]$Seconds = 0
@@ -91,6 +94,19 @@ function Test-StreamPage {
     }
 }
 
+# WebRTC is the low latency viewer: signaling goes through the tunnel, the media
+# itself travels directly over the LAN (UDP 8189).
+function Test-WebrtcPage {
+    try {
+        $code = & curl.exe --noproxy '*' -s -o NUL -w '%{http_code}' --max-time 4 `
+            "http://127.0.0.1:$WebrtcPort/prts/"
+        return ($LASTEXITCODE -eq 0 -and $code -eq '200')
+    }
+    catch {
+        return $false
+    }
+}
+
 Write-PrstLinkPanel -Node "$user@$($endpoint.Name) ($($endpoint.Address))" -State 'STREAM' `
     -Detail "hls $HlsPort, rtsp $RtspPort"
 
@@ -110,8 +126,9 @@ try {
         $ErrorActionPreference = $previous
     }
 
-    if (Test-StreamPage) {
-        Write-Host "  a tunnel on $HlsPort already serves the stream, reusing it." -ForegroundColor DarkGray
+    $viewerReady = if ($Viewer -eq 'webrtc') { Test-WebrtcPage } else { Test-StreamPage }
+    if ($viewerReady) {
+        Write-Host "  a tunnel already serves the stream, reusing it." -ForegroundColor DarkGray
     }
     else {
         if (Test-PrstRemotePort -HostName '127.0.0.1' -Port $HlsPort -TimeoutMs 400) {
@@ -122,10 +139,11 @@ try {
             }
         }
 
-        Write-Host "  opening ssh tunnel hls $HlsPort, rtsp $RtspPort ..."
+        Write-Host "  opening ssh tunnel webrtc $WebrtcPort, hls $HlsPort, rtsp $RtspPort ..."
         $arguments = @('-N') + $sshOptions + @(
             '-o', 'ExitOnForwardFailure=yes',
             '-o', 'ServerAliveInterval=20',
+            '-L', "127.0.0.1:$WebrtcPort`:127.0.0.1:$WebrtcPort",
             '-L', "127.0.0.1:$HlsPort`:127.0.0.1:$HlsPort",
             '-L', "127.0.0.1:$RtspPort`:127.0.0.1:$RtspPort",
             $target
@@ -137,10 +155,13 @@ try {
         $deadline = (Get-Date).AddSeconds(20)
         $ready = $false
         while ((Get-Date) -lt $deadline) {
-            if (Test-StreamPage) {
-                $ready = $true
-                break
+            if ($Viewer -eq 'webrtc') {
+                $ready = Test-WebrtcPage
             }
+            else {
+                $ready = Test-StreamPage
+            }
+            if ($ready) { break }
             if ($tunnel.HasExited) { break }
             Start-Sleep -Milliseconds 400
         }
@@ -158,9 +179,19 @@ try {
         Remove-Item -LiteralPath $tunnelLog -Force -ErrorAction SilentlyContinue
     }
 
-    $url = "http://127.0.0.1:$HlsPort/prts"
+    if ($Viewer -eq 'webrtc') {
+        $url = "http://127.0.0.1:$WebrtcPort/prts"
+        $note = 'WebRTC, about 200-500 ms behind the camera'
+        $other = "http://127.0.0.1:$HlsPort/prts (HLS, seconds behind)"
+    }
+    else {
+        $url = "http://127.0.0.1:$HlsPort/prts"
+        $note = 'HLS, seconds behind the camera'
+        $other = "http://127.0.0.1:$WebrtcPort/prts (WebRTC, much lower latency)"
+    }
     Write-Host ''
-    Write-Host "  browser: $url" -ForegroundColor Green
+    Write-Host "  browser: $url   ($note)" -ForegroundColor Green
+    Write-Host "  also:    $other" -ForegroundColor DarkGray
     Write-Host "  rtsp:    rtsp://127.0.0.1:$RtspPort/prts (needs a player)" -ForegroundColor DarkGray
     if (-not $NoBrowser) {
         Start-Process $url
