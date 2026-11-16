@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Shared helpers for the PRTS Windows side scripts.
 
@@ -410,5 +410,79 @@ function Set-PrstConsoleSize {
     }
     catch {
         # Non interactive host or a terminal that owns its own geometry.
+    }
+}
+
+# Asks which link to use, with both addresses resolved and probed. Returns
+# 'lan', 'tailscale' or 'auto'; returns $null when the operator quits.
+function Read-PrstLinkChoice {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [string]$Primary = 'PRTS',
+        [string]$Fallback = 'PRTS.local',
+        [int]$Port = 22
+    )
+
+    $devices = Read-PrstPrivateDevices -RepositoryRoot $RepositoryRoot
+
+    $lanAddress = ''
+    foreach ($candidate in @($Fallback, $Primary)) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
+        $address = Get-PrstIPv4Address -HostName $candidate
+        if ([string]::IsNullOrWhiteSpace($address)) { continue }
+        if (Test-PrstTailscaleAddress -Address $address) { continue }
+        $lanAddress = $address
+        break
+    }
+
+    $virtualAddress = ''
+    foreach ($key in @('tailscale.prts', 'tailscale.pi', 'tailscale.host')) {
+        if ($devices.ContainsKey($key) -and -not [string]::IsNullOrWhiteSpace($devices[$key])) {
+            $virtualAddress = $devices[$key]
+            break
+        }
+    }
+
+    $lanUp = $false
+    if (-not [string]::IsNullOrWhiteSpace($lanAddress)) {
+        $lanUp = Test-PrstRemotePort -HostName $lanAddress -Port $Port -TimeoutMs 1200
+    }
+    $virtualUp = $false
+    if (-not [string]::IsNullOrWhiteSpace($virtualAddress)) {
+        $virtualUp = Test-PrstRemotePort -HostName $virtualAddress -Port $Port -TimeoutMs 1200
+    }
+
+    function Format-PrstOption {
+        param([string]$Label, [string]$Address, [bool]$Up)
+
+        if ([string]::IsNullOrWhiteSpace($Address)) {
+            $state = '未配置'
+            $Address = '-'
+        }
+        elseif ($Up) { $state = '可用' }
+        else { $state = '不通' }
+        return ('  {0,-14} {1,-16} {2}' -f $Label, $Address, $state)
+    }
+
+    Write-Host ''
+    Write-Host '  PRTS  >  LINK' -ForegroundColor Cyan
+    Write-Host ('  ' + ('-' * 46)) -ForegroundColor DarkGray
+    Write-Host (Format-PrstOption -Label '1) 局域网直连' -Address $lanAddress -Up $lanUp)
+    Write-Host (Format-PrstOption -Label '2) 内网穿透' -Address $virtualAddress -Up $virtualUp)
+    Write-Host ('  {0,-14} {1,-16} {2}' -f '3) 自动', '局域网优先', '')
+    Write-Host '  0) 退出'
+    Write-Host ''
+
+    $choice = Read-Host '  选择'
+    switch ($choice.Trim()) {
+        '1' { return 'lan' }
+        '2' { return 'tailscale' }
+        '3' { return 'auto' }
+        '0' { return $null }
+        '' { return 'lan' }
+        default {
+            Write-Host '  没有这个选项。' -ForegroundColor Red
+            return $null
+        }
     }
 }

@@ -4,6 +4,16 @@
 
 - 在工作区内双击 `scripts\connect\connect_prts.bat`，或执行
   `powershell -ExecutionPolicy Bypass -File scripts\connect\connect_prts.ps1`
+- 不带参数时先弹菜单，列出局域网和 Tailscale 各自解析到的地址并探测 22 端口：
+
+  ```
+    1) 局域网直连       192.168.150.239  可用
+    2) 内网穿透        100.88.115.39    可用
+    3) 自动            局域网优先
+    0) 退出
+  ```
+
+  也可以跳过菜单：`connect_prts.bat -Link lan` / `-Link tailscale`。
 - 脚本按 `config/connection.ini` 依次尝试 `PRTS.local`、`PRTS` 等候选，先把名字解析成 IP
   再探测 22 端口（避免冷启动时 mDNS 慢导致误判），命中后通过 `SSH_ASKPASS` 把密码交给 ssh
 - 自动把控制台窗口调整为 120x38（仅经典控制台有效，Windows Terminal 忽略该请求）

@@ -28,7 +28,8 @@ scripts/
 
 | 场景 | 命令 |
 | --- | --- |
-| 连树莓派 | 双击 `scripts\connect\connect_prts.bat` |
+| 连树莓派 | 双击 `scripts\connect\connect_prts.bat`（会先让你选局域网 / 内网穿透） |
+| 指定链路连 | `connect_prts.bat -Link lan` 或 `-Link tailscale` |
 | 同步并编译 | `powershell -File scripts\deploy\sync_to_pi.ps1` |
 | 提交并推送 | `powershell -File scripts\deploy\push_all.ps1 -Message "..."` |
 | 看图传（PC） | 双击 `stream\start-stream.bat` |

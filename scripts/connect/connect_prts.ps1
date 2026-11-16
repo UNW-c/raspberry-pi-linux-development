@@ -20,8 +20,8 @@
 param(
     [string]$ConfigPath = "",
     [string]$Command = "",
-    [ValidateSet('auto', 'lan', 'tailscale')]
-    [string]$Link = 'auto',
+    [ValidateSet('', 'auto', 'lan', 'tailscale')]
+    [string]$Link = '',
     [switch]$NoBanner
 )
 
@@ -58,6 +58,16 @@ $windowRows = [int](Get-PrstIniValue $values 'window.rows' '38')
 
 if (-not $NoBanner) {
     Set-PrstConsoleSize -Columns $windowColumns -Rows $windowRows
+}
+
+# No -Link on the command line means "ask": the menu shows both addresses and
+# whether they answer, which is the whole point of having two ways in.
+if ([string]::IsNullOrWhiteSpace($Link)) {
+    $Link = Read-PrstLinkChoice -RepositoryRoot $repositoryRoot -Primary $hostName `
+        -Fallback $fallbackHost -Port $port
+    if ($null -eq $Link) {
+        exit 0
+    }
 }
 
 $candidates = Get-PrstLinkCandidates -RepositoryRoot $repositoryRoot -Primary $hostName `

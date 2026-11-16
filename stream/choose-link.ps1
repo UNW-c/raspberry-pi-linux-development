@@ -50,79 +50,16 @@ $values = Read-PrstIniFile -Path (Join-Path $repositoryRoot 'config\connection.i
 $hostName = Get-PrstIniValue $values 'ssh.host' 'PRTS'
 $fallbackHost = Get-PrstIniValue $values 'ssh.fallback_host' 'PRTS.local'
 $port = [int](Get-PrstIniValue $values 'ssh.port' '22')
-$devices = Read-PrstPrivateDevices -RepositoryRoot $repositoryRoot
 
-$lanAddress = ''
-foreach ($candidate in @($fallbackHost, $hostName)) {
-    if ([string]::IsNullOrWhiteSpace($candidate)) {
-        continue
-    }
-    $address = Get-PrstIPv4Address -HostName $candidate
-    if ([string]::IsNullOrWhiteSpace($address)) {
-        continue
-    }
-    if (Test-PrstTailscaleAddress -Address $address) {
-        continue  # MagicDNS answered with the tunnel address, not the LAN one
-    }
-    $lanAddress = $address
-    break
+$link = Read-PrstLinkChoice -RepositoryRoot $repositoryRoot -Primary $hostName `
+    -Fallback $fallbackHost -Port $port
+if ($null -eq $link) {
+    exit 0
 }
 
-$virtualAddress = ''
-foreach ($key in @('tailscale.prts', 'tailscale.pi', 'tailscale.host')) {
-    if ($devices.ContainsKey($key) -and -not [string]::IsNullOrWhiteSpace($devices[$key])) {
-        $virtualAddress = $devices[$key]
-        break
-    }
-}
-
-function Test-Address {
-    param([string]$Address)
-
-    if ([string]::IsNullOrWhiteSpace($Address)) {
-        return $false
-    }
-    return (Test-PrstRemotePort -HostName $Address -Port $port -TimeoutMs 1200)
-}
-
-$lanUp = Test-Address -Address $lanAddress
-$virtualUp = Test-Address -Address $virtualAddress
-
-function Format-Option {
-    param([string]$Label, [string]$Address, [bool]$Up)
-
-    $state = if ([string]::IsNullOrWhiteSpace($Address)) {
-        '未配置'
-    }
-    elseif ($Up) {
-        '可用'
-    }
-    else {
-        '不通'
-    }
-    return ('  {0,-14} {1,-16} {2}' -f $Label, $(if ($Address) { $Address } else { '-' }), $state)
-}
-
-Write-Host ''
-Write-Host '  PRTS  >  LINK' -ForegroundColor Cyan
-Write-Host ('  ' + ('-' * 46)) -ForegroundColor DarkGray
-Write-Host (Format-Option -Label '1) 局域网直连' -Address $lanAddress -Up $lanUp)
-Write-Host (Format-Option -Label '2) 内网穿透' -Address $virtualAddress -Up $virtualUp)
-Write-Host ('  {0,-14} {1,-16} {2}' -f '3) 自动', '局域网优先', '')
-Write-Host '  0) 退出'
-Write-Host ''
-
-$choice = Read-Host '  选择'
-switch ($choice.Trim()) {
-    '1' { $link = 'lan'; $ports = @{ Webrtc = 8889; Hls = 8888; Rtsp = 8554 } }
-    '2' { $link = 'tailscale'; $ports = @{ Webrtc = 9889; Hls = 9888; Rtsp = 9554 } }
-    '3' { $link = 'auto'; $ports = @{ Webrtc = 8889; Hls = 8888; Rtsp = 8554 } }
-    '0' { exit 0 }
-    '' { $link = 'lan'; $ports = @{ Webrtc = 8889; Hls = 8888; Rtsp = 8554 } }
-    default {
-        Write-Host '  没有这个选项。' -ForegroundColor Red
-        exit 2
-    }
+$ports = switch ($link) {
+    'tailscale' { @{ Webrtc = 9889; Hls = 9888; Rtsp = 9554 } }
+    default { @{ Webrtc = 8889; Hls = 8888; Rtsp = 8554 } }
 }
 
 $startScript = Join-Path $scriptDirectory 'start-stream.ps1'

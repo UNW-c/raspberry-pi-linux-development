@@ -85,7 +85,7 @@ prts-mqtt --help       # 帮助
 
 | 目录 | 文件 | 运行位置 | 作用 |
 | --- | --- | --- | --- |
-| `scripts/connect/` | `connect_prts.bat` / `.ps1` | Windows | 双击即连：解析主机、自动填密码、开 SSH 会话 |
+| `scripts/connect/` | `connect_prts.bat` / `.ps1` | Windows | 双击即连：选链路（局域网/穿透）、自动填密码、开 SSH 会话 |
 | `scripts/deploy/` | `sync_to_pi.ps1` | Windows | 打包 → scp → 远端解包 → 编译 → 安装 |
 | `scripts/deploy/` | `push_all.ps1` | Windows | 提交并同时推送 gitee 与 github |
 | `scripts/deploy/` | `deploy.sh` | 树莓派 | CMake 编译、跑单测、安装二进制、写登录钩子 |
